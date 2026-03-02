@@ -1,0 +1,3 @@
+litrace
+tracer_bpf*.go
+tracer_bpf*.o
