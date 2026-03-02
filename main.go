@@ -3,14 +3,40 @@ package main
 //go:generate go tool bpf2go tracer tracer.c
 
 import (
+	"bytes"
+	"encoding/binary"
+	"errors"
 	"fmt"
-	"github.com/cilium/ebpf/link"
 	"os"
 	"os/exec"
 	"os/signal"
 	"runtime"
 	"syscall"
+
+	"github.com/cilium/ebpf/link"
+	"github.com/cilium/ebpf/ringbuf"
+	"golang.org/x/sys/unix"
 )
+
+type event struct {
+	Ts        uint64
+	Pid       uint32
+	Tid       uint32
+	SyscallID int64
+	Ret       int64
+}
+
+func formatRet(ret int64) string {
+	if ret >= 0 {
+		return fmt.Sprintf("%d", ret)
+	}
+	errno := syscall.Errno(-ret)
+	name := unix.ErrnoName(errno)
+	if name == "" {
+		return fmt.Sprintf("-1 (error %d)", -ret)
+	}
+	return fmt.Sprintf("-1 %s (%s)", name, errno.Error())
+}
 
 func main() {
 	exeName := os.Args[0]
@@ -64,12 +90,26 @@ func main() {
 		os.Exit(1)
 	}
 
-	tp, err := link.Tracepoint("raw_syscalls", "sys_enter", objs.TraceSysEnter, nil)
+	tpEnter, err := link.Tracepoint("raw_syscalls", "sys_enter", objs.TraceSysEnter, nil)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "%s: %v\n", exeName, fmt.Errorf("failed to attach tracepoint: %w", err))
+		fmt.Fprintf(os.Stderr, "%s: %v\n", exeName, fmt.Errorf("failed to attach sys_enter tracepoint: %w", err))
 		os.Exit(1)
 	}
-	defer tp.Close()
+	defer tpEnter.Close()
+
+	tpExit, err := link.Tracepoint("raw_syscalls", "sys_exit", objs.TraceSysExit, nil)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%s: %v\n", exeName, fmt.Errorf("failed to attach sys_exit tracepoint: %w", err))
+		os.Exit(1)
+	}
+	defer tpExit.Close()
+
+	rd, err := ringbuf.NewReader(objs.Events)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%s: %v\n", exeName, fmt.Errorf("failed to open ring buffer reader: %w", err))
+		os.Exit(1)
+	}
+	defer rd.Close()
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
@@ -84,11 +124,36 @@ func main() {
 	}
 	runtime.UnlockOSThread()
 
-	if err := cmd.Wait(); err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
+	done := make(chan error, 1)
+	go func() {
+		done <- cmd.Wait()
+		rd.Close()
+	}()
+
+	for {
+		record, err := rd.Read()
+		if err != nil {
+			if errors.Is(err, ringbuf.ErrClosed) {
+				break
+			}
+			fmt.Fprintf(os.Stderr, "%s: reading event: %v\n", exeName, err)
+			continue
+		}
+
+		var ev event
+		if err := binary.Read(bytes.NewReader(record.RawSample), binary.LittleEndian, &ev); err != nil {
+			fmt.Fprintf(os.Stderr, "%s: decoding event: %v\n", exeName, err)
+			continue
+		}
+		fmt.Fprintf(os.Stderr, "%s(...) = %s\n", syscallName(ev.SyscallID), formatRet(ev.Ret))
+	}
+
+	waitErr := <-done
+	if waitErr != nil {
+		if exitErr, ok := waitErr.(*exec.ExitError); ok {
 			os.Exit(exitErr.ExitCode())
 		}
-		fmt.Fprintf(os.Stderr, "%s: %v\n", exeName, fmt.Errorf("failed to wait for child exit: %w", err))
+		fmt.Fprintf(os.Stderr, "%s: %v\n", exeName, fmt.Errorf("failed to wait for child exit: %w", waitErr))
 		os.Exit(1)
 	}
 }
