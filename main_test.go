@@ -56,7 +56,103 @@ func TestSimpleArgsDecode(t *testing.T) {
 			},
 			want: "syscall_0x270f(0x12, 0x34) = -1 EPERM (operation not permitted)",
 		},
-	}
+		{
+			name: "openat with variable path string",
+			ev: event{
+				SyscallID: int64(unix.SYS_OPENAT),
+				Ret:       3,
+				ArgCount:  3,
+				Args:      [6]uint64{uint64(^uint32(99)), 0, 0},
+				ArgTypes:  [6]uint8{argFD, varArgString, argFlags},
+				VarCount:  1,
+				VarDesc: [6]varArgDesc{{
+					ArgIndex: 1,
+					Offset:   0,
+					Length:   17,
+				}},
+				PayloadLen: 17,
+				Payload:    [512]byte{'/', 't', 'm', 'p', '/', 'l', 'i', 't', 'r', 'a', 'c', 'e', '_', 't', 'e', 's', 't'},
+			},
+			want: "openat(-100, \"/tmp/litrace_test\", 0x0) = 3",
+		},
+		{
+			name: "open path with truncation marker",
+			ev: event{
+				SyscallID: int64(unix.SYS_OPEN),
+				Ret:       4,
+				ArgCount:  1,
+				ArgTypes:  [6]uint8{varArgString},
+				VarCount:  1,
+				VarDesc: [6]varArgDesc{{
+					ArgIndex: 0,
+					Offset:   0,
+					Length:   5,
+					Flags:    varFlagTruncated,
+				}},
+				PayloadLen: 5,
+				Payload:    [512]byte{'/', 'v', 'a', 'r', '/'},
+			},
+			want: "open(\"/var/\"...) = 4",
+		},
+		{
+			name: "write with variable bytes preview",
+			ev: event{
+				SyscallID: int64(unix.SYS_WRITE),
+				Ret:       6,
+				ArgCount:  3,
+				Args:      [6]uint64{1, 0, 6},
+				ArgTypes:  [6]uint8{argFD, varArgBytes, argUint},
+				VarCount:  1,
+				VarDesc: [6]varArgDesc{{
+					ArgIndex: 1,
+					Offset:   0,
+					Length:   6,
+				}},
+				PayloadLen: 6,
+				Payload:    [512]byte{'h', 'e', 'l', 'l', 'o', '\n'},
+			},
+			want: "write(1, \"hello\\n\", 6) = 6",
+		},
+		{
+			name: "write bytes truncation marker",
+			ev: event{
+				SyscallID: int64(unix.SYS_WRITE),
+				Ret:       10,
+				ArgCount:  3,
+				Args:      [6]uint64{2, 0, 10},
+				ArgTypes:  [6]uint8{argFD, varArgBytes, argUint},
+				VarCount:  1,
+				VarDesc: [6]varArgDesc{{
+					ArgIndex: 1,
+					Offset:   0,
+					Length:   4,
+					Flags:    varFlagTruncated,
+				}},
+				PayloadLen: 4,
+				Payload:    [512]byte{'D', 'A', 'T', 'A'},
+			},
+			want: "write(2, \"DATA\"..., 10) = 10",
+		},
+                {
+                        name: "read with variable bytes preview uses return length",
+                        ev: event{
+                                SyscallID: int64(unix.SYS_READ),
+                                Ret:       3,
+                                ArgCount:  3,
+                                Args:      [6]uint64{4, 0, 10},
+                                ArgTypes:  [6]uint8{argFD, varArgBytes, argUint},
+                                VarCount:  1,
+                                VarDesc: [6]varArgDesc{{
+                                        ArgIndex: 1,
+                                        Offset:   0,
+                                        Length:   3,
+                                }},
+                                PayloadLen: 3,
+                                Payload:    [512]byte{'a', 'b', 'c'},
+                        },
+                        want: "read(4, \"abc\", 10) = 3",
+                },
+        }
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

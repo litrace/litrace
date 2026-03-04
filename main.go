@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"runtime"
+	"strconv"
 	"strings"
 	"syscall"
 
@@ -20,16 +21,28 @@ import (
 )
 
 type event struct {
-	Ts        uint64
-	SyscallID int64
-	Ret       int64
-	Args      [6]uint64
-	Pid       uint32
-	Tid       uint32
-	Seq       uint32
-	ArgCount  uint8
-	ArgTypes  [6]uint8
-	Reserved  [5]uint8
+	Ts          uint64
+	SyscallID   int64
+	Ret         int64
+	Args        [6]uint64
+	VarDesc     [6]varArgDesc
+	Payload     [512]byte
+	Pid         uint32
+	Tid         uint32
+	Seq         uint32
+	PayloadLen  uint16
+	ArgCount    uint8
+	VarCount    uint8
+	ArgTypes    [6]uint8
+	VarReserved uint8
+}
+
+type varArgDesc struct {
+	ArgIndex uint8
+	Flags    uint8
+	Offset   uint16
+	Length   uint16
+	Reserved uint16
 }
 
 const (
@@ -43,6 +56,114 @@ const (
 	argPtr   uint8 = 7
 	argRaw   uint8 = 255
 )
+
+const (
+	varArgNone   uint8 = 0
+	varArgString uint8 = 1
+	varArgBytes  uint8 = 2
+	varArgArgv   uint8 = 3
+)
+
+const (
+	varFlagNone        uint8 = 0
+	varFlagTruncated   uint8 = 1 << 0
+	varFlagReadError   uint8 = 1 << 1
+	varFlagNullPointer uint8 = 1 << 2
+)
+
+func isVarArgEnabled(ev event, idx int) bool {
+	if idx < 0 || idx >= len(ev.ArgTypes) {
+		return false
+	}
+	for i := 0; i < int(ev.VarCount) && i < len(ev.VarDesc); i++ {
+		if int(ev.VarDesc[i].ArgIndex) == idx {
+			return ev.ArgTypes[idx] >= varArgString && ev.ArgTypes[idx] <= varArgArgv
+		}
+	}
+	return false
+}
+
+func findVarArgDesc(ev event, idx int) (varArgDesc, bool) {
+	for i := 0; i < int(ev.VarCount) && i < len(ev.VarDesc); i++ {
+		desc := ev.VarDesc[i]
+		if int(desc.ArgIndex) == idx {
+			return desc, true
+		}
+	}
+	return varArgDesc{}, false
+}
+
+func formatVarString(ev event, desc varArgDesc) string {
+	if desc.Flags&varFlagNullPointer != 0 {
+		return "NULL"
+	}
+	if desc.Flags&varFlagReadError != 0 {
+		return "<?>"
+	}
+
+	payloadLen := int(ev.PayloadLen)
+	if payloadLen > len(ev.Payload) {
+		payloadLen = len(ev.Payload)
+	}
+
+	start := int(desc.Offset)
+	end := start + int(desc.Length)
+	if start < 0 || end < start || end > payloadLen {
+		return "<?>"
+	}
+
+	quoted := strconv.QuoteToASCII(string(ev.Payload[start:end]))
+	if desc.Flags&varFlagTruncated != 0 {
+		return quoted + "..."
+	}
+	return quoted
+}
+
+func formatVarBytes(ev event, desc varArgDesc) string {
+	if desc.Flags&varFlagNullPointer != 0 {
+		return "NULL"
+	}
+	if desc.Flags&varFlagReadError != 0 {
+		return "<?>"
+	}
+
+	payloadLen := int(ev.PayloadLen)
+	if payloadLen > len(ev.Payload) {
+		payloadLen = len(ev.Payload)
+	}
+
+	start := int(desc.Offset)
+	end := start + int(desc.Length)
+	if start < 0 || end < start || end > payloadLen {
+		return "<?>"
+	}
+
+	quoted := strconv.QuoteToASCII(string(ev.Payload[start:end]))
+	if desc.Flags&varFlagTruncated != 0 {
+		return quoted + "..."
+	}
+	return quoted
+}
+
+func formatVarArg(ev event, idx int) (string, bool) {
+	if !isVarArgEnabled(ev, idx) {
+		return "", false
+	}
+
+	desc, ok := findVarArgDesc(ev, idx)
+	if !ok {
+		return "", false
+	}
+
+	switch ev.ArgTypes[idx] {
+	case varArgString:
+		return formatVarString(ev, desc), true
+	case varArgBytes:
+		return formatVarBytes(ev, desc), true
+	default:
+		return "<?>", true
+	}
+}
 
 func formatRet(ret int64) string {
 	if ret >= 0 {
@@ -79,6 +200,10 @@ func formatWhence(raw uint64) string {
 }
 
 func formatArg(ev event, idx int) string {
+	if rendered, ok := formatVarArg(ev, idx); ok {
+		return rendered
+	}
+
 	typ := ev.ArgTypes[idx]
 	raw := ev.Args[idx]
 
