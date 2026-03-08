@@ -19,6 +19,10 @@ enum arg_type {
 enum {
 	MAX_VAR_ARGS = 6,
 	MAX_VAR_PAYLOAD = 512,
+	MAX_EXECVE_ARGV = 8,
+	MAX_EXECVE_ARG_STR = 128,
+	MAX_EXECVE_STATE_VARS = 2,
+	MAX_EXECVE_STATE_PAYLOAD = 256,
 };
 
 enum var_arg_kind {
@@ -60,6 +64,14 @@ struct event {
 	__u8 var_reserved;
 };
 
+struct execve_snapshot {
+	struct var_arg_desc var_desc[MAX_EXECVE_STATE_VARS];
+	__u8 payload[MAX_EXECVE_STATE_PAYLOAD];
+	__u16 payload_len;
+	__u8 var_count;
+	__u8 reserved;
+};
+
 struct syscall_data {
 	__u64 ts;
 	long syscall_id;
@@ -98,12 +110,19 @@ static const struct syscall_arg_schema scalar_syscall_schemas[] = {
 	 .arg_types = {ARG_FD, VAR_ARG_BYTES, ARG_UINT, ARG_NONE, ARG_NONE,
 		       ARG_NONE},
 	 },
-        {
-         .syscall_id = __NR_read,
-         .arg_count = 3,
-         .arg_types = {ARG_FD, VAR_ARG_BYTES, ARG_UINT, ARG_NONE, ARG_NONE,
-                       ARG_NONE},
-         },
+	{
+	 .syscall_id = __NR_read,
+	 .arg_count = 3,
+	 .arg_types = {ARG_FD, VAR_ARG_BYTES, ARG_UINT, ARG_NONE, ARG_NONE,
+		       ARG_NONE},
+	 },
+	{
+	 .syscall_id = __NR_execve,
+	 .arg_count = 3,
+	 .arg_types =
+	 {VAR_ARG_STRING, VAR_ARG_ARGV, ARG_PTR, ARG_NONE, ARG_NONE,
+	  ARG_NONE},
+	 },
 };
 
 struct {
@@ -129,6 +148,13 @@ struct {
 	__uint(type, BPF_MAP_TYPE_LRU_HASH);
 	__uint(max_entries, 16384);
 	__type(key, __u32);
+	__type(value, struct execve_snapshot);
+} execve_snapshots SEC(".maps");
+
+struct {
+	__uint(type, BPF_MAP_TYPE_LRU_HASH);
+	__uint(max_entries, 16384);
+	__type(key, __u32);
 	__type(value, __u32);
 } tid_sequences SEC(".maps");
 
@@ -145,7 +171,7 @@ static __always_inline void set_syscall_arg_schema(long syscall_id,
 	int j;
 
 #pragma unroll
-	for (j = 0; j < 5; j++) {
+	for (j = 0; j < 6; j++) {
 		const struct syscall_arg_schema *schema =
 		    &scalar_syscall_schemas[j];
 
@@ -189,18 +215,18 @@ static __always_inline void append_var_string(struct event *e,
 	}
 
 	if (e->payload_len > 0) {
-                desc->flags |= VAR_FLAG_TRUNCATED;
+		desc->flags |= VAR_FLAG_TRUNCATED;
 		e->var_count++;
 		return;
-        }
+	}
 
-        available = MAX_VAR_PAYLOAD;
+	available = MAX_VAR_PAYLOAD;
 	copied = bpf_probe_read_user_str(&e->payload[0], available, ptr);
-        if (copied < 0) {
-                desc->flags |= VAR_FLAG_READ_ERROR;
-                e->var_count++;
+	if (copied < 0) {
+		desc->flags |= VAR_FLAG_READ_ERROR;
+		e->var_count++;
 		return;
-        }
+	}
 
 	if ((__u32) copied == available)
 		desc->flags |= VAR_FLAG_TRUNCATED;
@@ -236,17 +262,17 @@ static __always_inline void append_var_bytes(struct event *e,
 	}
 
 	if (e->payload_len > 0) {
-                desc->flags |= VAR_FLAG_TRUNCATED;
+		desc->flags |= VAR_FLAG_TRUNCATED;
 		e->var_count++;
 		return;
-        }
+	}
 
-        available = MAX_VAR_PAYLOAD;
+	available = MAX_VAR_PAYLOAD;
 	to_copy = available;
 	if ((__u64) to_copy > size) {
-                to_copy = size;
-        } else if (size > (__u64) to_copy) {
-                desc->flags |= VAR_FLAG_TRUNCATED;
+		to_copy = size;
+	} else if (size > (__u64) to_copy) {
+		desc->flags |= VAR_FLAG_TRUNCATED;
 	}
 
 	if (to_copy == 0) {
@@ -263,6 +289,241 @@ static __always_inline void append_var_bytes(struct event *e,
 	desc->length = to_copy;
 	e->payload_len = to_copy;
 	e->var_count++;
+}
+
+static __always_inline void append_var_argv(struct event *e,
+					    __u8 arg_index,
+					    const char *const *argv)
+{
+	__u32 start;
+	__u32 cursor;
+	__u8 exhausted_argv_slots = 1;
+	int i;
+	struct var_arg_desc *desc;
+
+	if (e->var_count >= MAX_VAR_ARGS)
+		return;
+
+	desc = &e->var_desc[e->var_count];
+	desc->arg_index = arg_index;
+	desc->flags = VAR_FLAG_NONE;
+	desc->offset = e->payload_len;
+	desc->length = 0;
+	desc->reserved = 0;
+
+	if (!argv) {
+		desc->flags |= VAR_FLAG_NULL_POINTER;
+		e->var_count++;
+		return;
+	}
+
+	start = e->payload_len;
+	if (start >= MAX_VAR_PAYLOAD) {
+		desc->flags |= VAR_FLAG_TRUNCATED;
+		e->var_count++;
+		return;
+	}
+
+	cursor = start;
+
+#pragma unroll
+	for (i = 0; i < MAX_EXECVE_ARGV; i++) {
+		const char *arg_ptr = 0;
+		int copied;
+
+		if (bpf_probe_read_user(&arg_ptr, sizeof(arg_ptr), &argv[i]) <
+		    0) {
+			desc->flags |= VAR_FLAG_READ_ERROR;
+			exhausted_argv_slots = 0;
+			break;
+		}
+
+		if (!arg_ptr) {
+			exhausted_argv_slots = 0;
+			break;
+		}
+
+		if (cursor > MAX_VAR_PAYLOAD - MAX_EXECVE_ARG_STR) {
+			desc->flags |= VAR_FLAG_TRUNCATED;
+			exhausted_argv_slots = 0;
+			break;
+		}
+
+		copied =
+		    bpf_probe_read_user_str(&e->payload[cursor],
+					    MAX_EXECVE_ARG_STR, arg_ptr);
+		if (copied < 0) {
+			desc->flags |= VAR_FLAG_READ_ERROR;
+			exhausted_argv_slots = 0;
+			break;
+		}
+
+		if (copied > MAX_EXECVE_ARG_STR)
+			copied = MAX_EXECVE_ARG_STR;
+
+		cursor += copied;
+		if (copied == MAX_EXECVE_ARG_STR) {
+			desc->flags |= VAR_FLAG_TRUNCATED;
+			exhausted_argv_slots = 0;
+			break;
+		}
+	}
+
+	if (exhausted_argv_slots) {
+		const char *next_ptr = 0;
+
+		if (bpf_probe_read_user(&next_ptr, sizeof(next_ptr),
+					&argv[MAX_EXECVE_ARGV]) < 0) {
+			desc->flags |= VAR_FLAG_READ_ERROR;
+		} else if (next_ptr) {
+			desc->flags |= VAR_FLAG_TRUNCATED;
+		}
+	}
+
+	if (cursor > start) {
+		desc->length = cursor - start;
+		e->payload_len = cursor;
+	}
+	e->var_count++;
+}
+
+static __always_inline void append_execve_var_string(struct execve_snapshot
+						     *snap, __u8 arg_index,
+						     const char *ptr)
+{
+	int copied;
+	struct var_arg_desc *desc;
+
+	if (snap->var_count >= MAX_EXECVE_STATE_VARS)
+		return;
+
+	desc = &snap->var_desc[snap->var_count];
+	desc->arg_index = arg_index;
+	desc->flags = VAR_FLAG_NONE;
+	desc->offset = 0;
+	desc->length = 0;
+	desc->reserved = 0;
+
+	if (!ptr) {
+		desc->flags |= VAR_FLAG_NULL_POINTER;
+		snap->var_count++;
+		return;
+	}
+
+	copied =
+	    bpf_probe_read_user_str(&snap->payload[0], MAX_EXECVE_ARG_STR, ptr);
+	if (copied < 0) {
+		desc->flags |= VAR_FLAG_READ_ERROR;
+		snap->var_count++;
+		return;
+	}
+
+	if (copied > MAX_EXECVE_ARG_STR)
+		copied = MAX_EXECVE_ARG_STR;
+
+	if (copied == MAX_EXECVE_ARG_STR)
+		desc->flags |= VAR_FLAG_TRUNCATED;
+
+	if (copied > 0) {
+		desc->length = copied - 1;
+		snap->payload_len = desc->length;
+	}
+	snap->var_count++;
+}
+
+static __always_inline void append_execve_var_argv(struct execve_snapshot *snap,
+						   __u8 arg_index,
+						   const char *const *argv)
+{
+	__u32 start;
+	__u32 cursor;
+	__u8 exhausted_argv_slots = 1;
+	int i;
+	struct var_arg_desc *desc;
+
+	if (snap->var_count >= MAX_EXECVE_STATE_VARS)
+		return;
+
+	desc = &snap->var_desc[snap->var_count];
+	desc->arg_index = arg_index;
+	desc->flags = VAR_FLAG_NONE;
+	desc->offset = snap->payload_len;
+	desc->length = 0;
+	desc->reserved = 0;
+
+	if (!argv) {
+		desc->flags |= VAR_FLAG_NULL_POINTER;
+		snap->var_count++;
+		return;
+	}
+
+	start = snap->payload_len;
+	if (start >= MAX_EXECVE_STATE_PAYLOAD) {
+		desc->flags |= VAR_FLAG_TRUNCATED;
+		snap->var_count++;
+		return;
+	}
+
+	cursor = start;
+
+#pragma unroll
+	for (i = 0; i < MAX_EXECVE_ARGV; i++) {
+		const char *arg_ptr = 0;
+		int copied;
+
+		if (bpf_probe_read_user(&arg_ptr, sizeof(arg_ptr), &argv[i]) <
+		    0) {
+			desc->flags |= VAR_FLAG_READ_ERROR;
+			exhausted_argv_slots = 0;
+			break;
+		}
+
+		if (!arg_ptr) {
+			exhausted_argv_slots = 0;
+			break;
+		}
+
+		if (cursor > MAX_EXECVE_STATE_PAYLOAD - MAX_EXECVE_ARG_STR) {
+			desc->flags |= VAR_FLAG_TRUNCATED;
+			exhausted_argv_slots = 0;
+			break;
+		}
+
+		copied = bpf_probe_read_user_str(&snap->payload[cursor],
+						 MAX_EXECVE_ARG_STR, arg_ptr);
+		if (copied < 0) {
+			desc->flags |= VAR_FLAG_READ_ERROR;
+			exhausted_argv_slots = 0;
+			break;
+		}
+
+		if (copied > MAX_EXECVE_ARG_STR)
+			copied = MAX_EXECVE_ARG_STR;
+
+		cursor += copied;
+		if (copied == MAX_EXECVE_ARG_STR) {
+			desc->flags |= VAR_FLAG_TRUNCATED;
+			exhausted_argv_slots = 0;
+			break;
+		}
+	}
+
+	if (exhausted_argv_slots) {
+		const char *next_ptr = 0;
+
+		if (bpf_probe_read_user(&next_ptr, sizeof(next_ptr),
+					&argv[MAX_EXECVE_ARGV]) < 0) {
+			desc->flags |= VAR_FLAG_READ_ERROR;
+		} else if (next_ptr) {
+			desc->flags |= VAR_FLAG_TRUNCATED;
+		}
+	}
+
+	if (cursor > start) {
+		desc->length = cursor - start;
+		snap->payload_len = cursor;
+	}
+	snap->var_count++;
 }
 
 SEC("tracepoint/raw_syscalls/sys_enter")
@@ -282,11 +543,12 @@ int trace_sys_enter(struct sys_enter_args *ctx)
 		next_seq = *prev_seq + 1;
 	bpf_map_update_elem(&tid_sequences, &tid, &next_seq, BPF_ANY);
 
-	struct syscall_data state = {
-		.ts = bpf_ktime_get_ns(),
-		.syscall_id = ctx->id,
-		.seq = next_seq,
-	};
+	struct syscall_data state;
+
+	__builtin_memset(&state, 0, sizeof(state));
+	state.ts = bpf_ktime_get_ns();
+	state.syscall_id = ctx->id;
+	state.seq = next_seq;
 
 	state.args[0] = ctx->args[0];
 	state.args[1] = ctx->args[1];
@@ -294,6 +556,21 @@ int trace_sys_enter(struct sys_enter_args *ctx)
 	state.args[3] = ctx->args[3];
 	state.args[4] = ctx->args[4];
 	state.args[5] = ctx->args[5];
+
+	if (ctx->id == __NR_execve) {
+		struct execve_snapshot zero = { 0 };
+		struct execve_snapshot *snapshot;
+
+		bpf_map_update_elem(&execve_snapshots, &tid, &zero, BPF_ANY);
+		snapshot = bpf_map_lookup_elem(&execve_snapshots, &tid);
+		if (snapshot) {
+			append_execve_var_string(snapshot, 0,
+						 (const char *)ctx->args[0]);
+			append_execve_var_argv(snapshot, 1,
+					       (const char *const *)
+					       ctx->args[1]);
+		}
+	}
 
 	bpf_map_update_elem(&inflight_syscalls, &tid, &state, BPF_ANY);
 	return 0;
@@ -313,6 +590,7 @@ int trace_sys_exit(struct sys_exit_args *ctx)
 	__u32 tid = (__u32) pid_tgid;
 	int i;
 	int j;
+	int k;
 
 	if (!bpf_map_lookup_elem(&target_pids, &tgid))
 		return 0;
@@ -364,15 +642,40 @@ int trace_sys_exit(struct sys_exit_args *ctx)
 		e->arg_types[1] = VAR_ARG_STRING;
 	}
 
+	if (state->syscall_id == __NR_execve) {
+		struct execve_snapshot *snapshot =
+		    bpf_map_lookup_elem(&execve_snapshots, &tid);
+
+		if (snapshot) {
+			e->payload_len = snapshot->payload_len;
+			e->var_count = snapshot->var_count;
+
+#pragma unroll
+			for (k = 0; k < MAX_EXECVE_STATE_VARS; k++)
+				e->var_desc[k] = snapshot->var_desc[k];
+
+#pragma unroll
+			for (k = 0; k < MAX_EXECVE_STATE_PAYLOAD; k++)
+				e->payload[k] = snapshot->payload[k];
+		} else {
+			e->var_count = 2;
+			e->var_desc[0].arg_index = 0;
+			e->var_desc[0].flags = VAR_FLAG_READ_ERROR;
+			e->var_desc[1].arg_index = 1;
+			e->var_desc[1].flags = VAR_FLAG_READ_ERROR;
+		}
+		bpf_map_delete_elem(&execve_snapshots, &tid);
+	}
+
 	if (state->syscall_id == __NR_write) {
 		append_var_bytes(e, 1, (const void *)state->args[1],
 				 (__u64) state->args[2]);
 	}
 
-        if (state->syscall_id == __NR_read && ctx->ret > 0) {
-                append_var_bytes(e, 1, (const void *)state->args[1],
-                                 (__u64) ctx->ret);
-        }
+	if (state->syscall_id == __NR_read && ctx->ret > 0) {
+		append_var_bytes(e, 1, (const void *)state->args[1],
+				 (__u64) ctx->ret);
+	}
 
 	bpf_ringbuf_submit(e, 0);
 	bpf_map_delete_elem(&inflight_syscalls, &tid);

@@ -133,26 +133,107 @@ func TestSimpleArgsDecode(t *testing.T) {
 			},
 			want: "write(2, \"DATA\"..., 10) = 10",
 		},
-                {
-                        name: "read with variable bytes preview uses return length",
-                        ev: event{
-                                SyscallID: int64(unix.SYS_READ),
-                                Ret:       3,
-                                ArgCount:  3,
-                                Args:      [6]uint64{4, 0, 10},
-                                ArgTypes:  [6]uint8{argFD, varArgBytes, argUint},
-                                VarCount:  1,
-                                VarDesc: [6]varArgDesc{{
-                                        ArgIndex: 1,
-                                        Offset:   0,
-                                        Length:   3,
-                                }},
-                                PayloadLen: 3,
-                                Payload:    [512]byte{'a', 'b', 'c'},
-                        },
-                        want: "read(4, \"abc\", 10) = 3",
-                },
-        }
+		{
+			name: "read with variable bytes preview uses return length",
+			ev: event{
+				SyscallID: int64(unix.SYS_READ),
+				Ret:       3,
+				ArgCount:  3,
+				Args:      [6]uint64{4, 0, 10},
+				ArgTypes:  [6]uint8{argFD, varArgBytes, argUint},
+				VarCount:  1,
+				VarDesc: [6]varArgDesc{{
+					ArgIndex: 1,
+					Offset:   0,
+					Length:   3,
+				}},
+				PayloadLen: 3,
+				Payload:    [512]byte{'a', 'b', 'c'},
+			},
+			want: "read(4, \"abc\", 10) = 3",
+		},
+		{
+			name: "execve with filename and argv summary",
+			ev: event{
+				SyscallID: int64(unix.SYS_EXECVE),
+				Ret:       0,
+				ArgCount:  3,
+				Args:      [6]uint64{0, 0, 0x7ffc1234},
+				ArgTypes:  [6]uint8{varArgString, varArgArgv, argPtr},
+				VarCount:  2,
+				VarDesc: [6]varArgDesc{
+					{
+						ArgIndex: 0,
+						Offset:   0,
+						Length:   11,
+					},
+					{
+						ArgIndex: 1,
+						Offset:   11,
+						Length:   15,
+					},
+				},
+				PayloadLen: 26,
+				Payload: [512]byte{
+					'/', 'b', 'i', 'n', '/', 'e', 'c', 'h', 'o', ' ', 'x',
+					'e', 'c', 'h', 'o', 0, 'h', 'e', 'l', 'l', 'o', 0, '-', 'n', 0, 0,
+				},
+			},
+			want: "execve(\"/bin/echo x\", [\"echo\", \"hello\", \"-n\", \"\"], 0x7ffc1234) = 0",
+		},
+		{
+			name: "execve argv truncation marker",
+			ev: event{
+				SyscallID: int64(unix.SYS_EXECVE),
+				Ret:       -int64(unix.E2BIG),
+				ArgCount:  3,
+				Args:      [6]uint64{0, 0, 0x7ffc55aa},
+				ArgTypes:  [6]uint8{varArgString, varArgArgv, argPtr},
+				VarCount:  2,
+				VarDesc: [6]varArgDesc{
+					{
+						ArgIndex: 0,
+						Offset:   0,
+						Length:   9,
+					},
+					{
+						ArgIndex: 1,
+						Offset:   9,
+						Length:   10,
+						Flags:    varFlagTruncated,
+					},
+				},
+				PayloadLen: 19,
+				Payload: [512]byte{
+					'/', 'b', 'i', 'n', '/', 's', 'h', ' ', 'x',
+					's', 'h', 0, '-', 'c', 0, 'e', 'c', 'h', 'o',
+				},
+			},
+			want: "execve(\"/bin/sh x\", [\"sh\", \"-c\", \"echo\"]..., 0x7ffc55aa) = -1 E2BIG (argument list too long)",
+		},
+		{
+			name: "execve argv read error with null filename",
+			ev: event{
+				SyscallID: int64(unix.SYS_EXECVE),
+				Ret:       -int64(unix.EFAULT),
+				ArgCount:  3,
+				Args:      [6]uint64{0, 0, 0x0},
+				ArgTypes:  [6]uint8{varArgString, varArgArgv, argPtr},
+				VarCount:  2,
+				VarDesc: [6]varArgDesc{
+					{
+						ArgIndex: 0,
+						Flags:    varFlagNullPointer,
+					},
+					{
+						ArgIndex: 1,
+						Flags:    varFlagReadError,
+					},
+				},
+			},
+			want: "execve(NULL, [<?>], 0x0) = -1 EFAULT (bad address)",
+		},
+	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

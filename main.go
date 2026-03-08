@@ -93,14 +93,7 @@ func findVarArgDesc(ev event, idx int) (varArgDesc, bool) {
 	return varArgDesc{}, false
 }
 
-func formatVarString(ev event, desc varArgDesc) string {
-	if desc.Flags&varFlagNullPointer != 0 {
-		return "NULL"
-	}
-	if desc.Flags&varFlagReadError != 0 {
-		return "<?>"
-	}
-
+func varPayloadSlice(ev event, desc varArgDesc) ([]byte, bool) {
 	payloadLen := int(ev.PayloadLen)
 	if payloadLen > len(ev.Payload) {
 		payloadLen = len(ev.Payload)
@@ -109,10 +102,26 @@ func formatVarString(ev event, desc varArgDesc) string {
 	start := int(desc.Offset)
 	end := start + int(desc.Length)
 	if start < 0 || end < start || end > payloadLen {
+		return nil, false
+	}
+
+	return ev.Payload[start:end], true
+}
+
+func formatVarString(ev event, desc varArgDesc) string {
+	if desc.Flags&varFlagNullPointer != 0 {
+		return "NULL"
+	}
+	if desc.Flags&varFlagReadError != 0 {
 		return "<?>"
 	}
 
-	quoted := strconv.QuoteToASCII(string(ev.Payload[start:end]))
+	payload, ok := varPayloadSlice(ev, desc)
+	if !ok {
+		return "<?>"
+	}
+
+	quoted := strconv.QuoteToASCII(string(payload))
 	if desc.Flags&varFlagTruncated != 0 {
 		return quoted + "..."
 	}
@@ -127,22 +136,48 @@ func formatVarBytes(ev event, desc varArgDesc) string {
 		return "<?>"
 	}
 
-	payloadLen := int(ev.PayloadLen)
-	if payloadLen > len(ev.Payload) {
-		payloadLen = len(ev.Payload)
-	}
-
-	start := int(desc.Offset)
-	end := start + int(desc.Length)
-	if start < 0 || end < start || end > payloadLen {
+	payload, ok := varPayloadSlice(ev, desc)
+	if !ok {
 		return "<?>"
 	}
 
-	quoted := strconv.QuoteToASCII(string(ev.Payload[start:end]))
+	quoted := strconv.QuoteToASCII(string(payload))
 	if desc.Flags&varFlagTruncated != 0 {
 		return quoted + "..."
 	}
 	return quoted
+}
+
+func formatVarArgv(ev event, desc varArgDesc) string {
+	if desc.Flags&varFlagNullPointer != 0 {
+		return "NULL"
+	}
+
+	payload, ok := varPayloadSlice(ev, desc)
+	if !ok {
+		return "<?>"
+	}
+
+	parts := make([]string, 0, 8)
+	for len(payload) > 0 {
+		idx := bytes.IndexByte(payload, 0)
+		if idx < 0 {
+			parts = append(parts, strconv.QuoteToASCII(string(payload)))
+			break
+		}
+		parts = append(parts, strconv.QuoteToASCII(string(payload[:idx])))
+		payload = payload[idx+1:]
+	}
+
+	if desc.Flags&varFlagReadError != 0 {
+		parts = append(parts, "<?>")
+	}
+
+	rendered := "[" + strings.Join(parts, ", ") + "]"
+	if desc.Flags&varFlagTruncated != 0 {
+		return rendered + "..."
+	}
+	return rendered
 }
 
 func formatVarArg(ev event, idx int) (string, bool) {
@@ -160,6 +195,8 @@ func formatVarArg(ev event, idx int) (string, bool) {
 		return formatVarString(ev, desc), true
 	case varArgBytes:
 		return formatVarBytes(ev, desc), true
+	case varArgArgv:
+		return formatVarArgv(ev, desc), true
 	default:
 		return "<?>", true
 	}
