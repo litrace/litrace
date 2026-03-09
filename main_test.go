@@ -1,10 +1,85 @@
 package main
 
 import (
+	"strings"
 	"testing"
 
 	"golang.org/x/sys/unix"
 )
+
+func TestParseCLIArgs(t *testing.T) {
+	tests := []struct {
+		name         string
+		args         []string
+		wantFollow   bool
+		wantProgName string
+		wantProgPath string
+		wantProgArgs []string
+		wantErr      string
+	}{
+		{
+			name:    "requires program",
+			args:    []string{},
+			wantErr: "usage: litrace [-f] <program> [args...]",
+		},
+		{
+			name:    "rejects unknown option",
+			args:    []string{"-x", "/bin/echo"},
+			wantErr: "unknown option \"-x\"",
+		},
+		{
+			name:         "supports -f before program",
+			args:         []string{"-f", "/bin/echo", "hi"},
+			wantFollow:   true,
+			wantProgName: "/bin/echo",
+			wantProgPath: "/bin/echo",
+			wantProgArgs: []string{"hi"},
+		},
+		{
+			name:         "supports -- to stop option parsing",
+			args:         []string{"--", "/bin/echo", "ok"},
+			wantProgName: "/bin/echo",
+			wantProgPath: "/bin/echo",
+			wantProgArgs: []string{"ok"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg, err := parseCLIArgs("litrace", tt.args)
+			if tt.wantErr != "" {
+				if err == nil {
+					t.Fatalf("parseCLIArgs() expected error %q, got nil", tt.wantErr)
+				}
+				if !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("parseCLIArgs() error mismatch: got %q want substring %q", err, tt.wantErr)
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("parseCLIArgs() unexpected error: %v", err)
+			}
+			if cfg.followForks != tt.wantFollow {
+				t.Fatalf("parseCLIArgs() followForks mismatch: got %v want %v", cfg.followForks, tt.wantFollow)
+			}
+			if cfg.programName != tt.wantProgName {
+				t.Fatalf("parseCLIArgs() programName mismatch: got %q want %q", cfg.programName, tt.wantProgName)
+			}
+			if cfg.programPath != tt.wantProgPath {
+				t.Fatalf("parseCLIArgs() programPath mismatch: got %q want %q", cfg.programPath, tt.wantProgPath)
+			}
+			if len(cfg.programArgs) != len(tt.wantProgArgs) {
+				t.Fatalf("parseCLIArgs() programArgs length mismatch: got %d want %d", len(cfg.programArgs), len(tt.wantProgArgs))
+			}
+			for i := range cfg.programArgs {
+				if cfg.programArgs[i] != tt.wantProgArgs[i] {
+					t.Fatalf("parseCLIArgs() programArgs[%d] mismatch: got %q want %q", i, cfg.programArgs[i], tt.wantProgArgs[i])
+				}
+			}
+		})
+	}
+}
 
 func TestSimpleArgsDecode(t *testing.T) {
 	tests := []struct {
@@ -240,6 +315,114 @@ func TestSimpleArgsDecode(t *testing.T) {
 			got := formatEventLine(tt.ev)
 			if got != tt.want {
 				t.Fatalf("formatEventLine() mismatch for %s: got %q want %q", tt.name, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestFormatEventPrefix(t *testing.T) {
+	const rootTGID = uint32(4242)
+
+	tests := []struct {
+		name string
+		ev   event
+		want string
+	}{
+		{
+			name: "root process has no prefix",
+			ev: event{
+				Pid: rootTGID,
+				Tid: rootTGID,
+			},
+			want: "",
+		},
+		{
+			name: "child process is prefixed",
+			ev: event{
+				Pid: 9001,
+				Tid: 9001,
+			},
+			want: "[pid 9001] ",
+		},
+		{
+			name: "thread in root process is prefixed",
+			ev: event{
+				Pid: rootTGID,
+				Tid: 9002,
+			},
+			want: "[pid 9002] ",
+		},
+		{
+			name: "zero tid emits no prefix",
+			ev:   event{},
+			want: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := formatEventPrefix(tt.ev, rootTGID)
+			if got != tt.want {
+				t.Fatalf("formatEventPrefix() mismatch for %s: got %q want %q", tt.name, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestFormatOutputLine(t *testing.T) {
+	const rootTGID = uint32(4242)
+
+	tests := []struct {
+		name string
+		ev   event
+		want string
+	}{
+		{
+			name: "root process line has no pid prefix",
+			ev: event{
+				Pid:       rootTGID,
+				Tid:       rootTGID,
+				SyscallID: int64(unix.SYS_CLOSE),
+				Ret:       0,
+				ArgCount:  1,
+				Args:      [6]uint64{11},
+				ArgTypes:  [6]uint8{argFD},
+			},
+			want: "close(11) = 0",
+		},
+		{
+			name: "child process line carries strace style pid prefix",
+			ev: event{
+				Pid:       9001,
+				Tid:       9001,
+				SyscallID: int64(unix.SYS_CLOSE),
+				Ret:       0,
+				ArgCount:  1,
+				Args:      [6]uint64{12},
+				ArgTypes:  [6]uint8{argFD},
+			},
+			want: "[pid 9001] close(12) = 0",
+		},
+		{
+			name: "thread line uses task id in pid prefix",
+			ev: event{
+				Pid:       rootTGID,
+				Tid:       9002,
+				SyscallID: int64(unix.SYS_CLOSE),
+				Ret:       0,
+				ArgCount:  1,
+				Args:      [6]uint64{13},
+				ArgTypes:  [6]uint8{argFD},
+			},
+			want: "[pid 9002] close(13) = 0",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := formatOutputLine(tt.ev, rootTGID)
+			if got != tt.want {
+				t.Fatalf("formatOutputLine() mismatch for %s: got %q want %q", tt.name, got, tt.want)
 			}
 		})
 	}

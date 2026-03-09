@@ -288,28 +288,87 @@ func formatEventLine(ev event) string {
 	return fmt.Sprintf("%s(%s) = %s", syscallName(ev.SyscallID), formatArgs(ev), formatRet(ev.Ret))
 }
 
+func formatEventPrefix(ev event, rootTGID uint32) string {
+	if ev.Tid == 0 {
+		return ""
+	}
+
+	if ev.Pid == rootTGID && ev.Tid == rootTGID {
+		return ""
+	}
+
+	return fmt.Sprintf("[pid %d] ", ev.Tid)
+}
+
+func formatOutputLine(ev event, rootTGID uint32) string {
+	return formatEventPrefix(ev, rootTGID) + formatEventLine(ev)
+}
+
+type cliConfig struct {
+	followForks bool
+	programName string
+	programPath string
+	programArgs []string
+}
+
+func usageError(exeName string) error {
+	return fmt.Errorf("usage: %s [-f] <program> [args...]", exeName)
+}
+
+func parseCLIArgs(exeName string, args []string) (cliConfig, error) {
+	cfg := cliConfig{}
+
+	for len(args) > 0 {
+		arg := args[0]
+		if arg == "--" {
+			args = args[1:]
+			break
+		}
+		if !strings.HasPrefix(arg, "-") || arg == "-" {
+			break
+		}
+
+		switch arg {
+		case "-f":
+			cfg.followForks = true
+			args = args[1:]
+		default:
+			return cliConfig{}, fmt.Errorf("unknown option %q", arg)
+		}
+	}
+
+	if len(args) == 0 {
+		return cliConfig{}, usageError(exeName)
+	}
+
+	path, err := exec.LookPath(args[0])
+	if err != nil {
+		return cliConfig{}, fmt.Errorf("%s: %w", args[0], err)
+	}
+
+	cfg.programName = args[0]
+	cfg.programPath = path
+	cfg.programArgs = args[1:]
+	return cfg, nil
+}
+
 func main() {
 	exeName := os.Args[0]
 
-	if len(os.Args) < 2 {
-		fmt.Fprintf(os.Stderr, "%s\n", fmt.Errorf("usage: %s <program> [args...]", exeName))
-		os.Exit(1)
-	}
-
-	path, err := exec.LookPath(os.Args[1])
+	cfg, err := parseCLIArgs(exeName, os.Args[1:])
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "%s\n", fmt.Errorf("%s: %w", os.Args[1], err))
+		fmt.Fprintf(os.Stderr, "%s\n", err)
 		os.Exit(1)
 	}
 
-	cmd := exec.Command(path, os.Args[2:]...)
+	cmd := exec.Command(cfg.programPath, cfg.programArgs...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin
 	cmd.SysProcAttr = &syscall.SysProcAttr{Ptrace: true, Setpgid: true}
 
 	if err := cmd.Start(); err != nil {
-		fmt.Fprintf(os.Stderr, "%s: %v\n", exeName, fmt.Errorf("failed to start %s: %w", os.Args[1], err))
+		fmt.Fprintf(os.Stderr, "%s: %v\n", exeName, fmt.Errorf("failed to start %s: %w", cfg.programName, err))
 		os.Exit(1)
 	}
 
@@ -335,6 +394,15 @@ func main() {
 
 	tgid := uint32(pid)
 	val := uint8(1)
+	followForksKey := uint32(0)
+	followForksVal := uint8(0)
+	if cfg.followForks {
+		followForksVal = 1
+	}
+	if err := objs.FollowForksConfig.Put(followForksKey, followForksVal); err != nil {
+		fmt.Fprintf(os.Stderr, "%s: %v\n", exeName, fmt.Errorf("failed to set follow-forks config: %w", err))
+		os.Exit(1)
+	}
 	if err := objs.TargetPids.Put(tgid, val); err != nil {
 		fmt.Fprintf(os.Stderr, "%s: %v\n", exeName, fmt.Errorf("failed to populate PID map: %w", err))
 		os.Exit(1)
@@ -353,6 +421,13 @@ func main() {
 		os.Exit(1)
 	}
 	defer tpExit.Close()
+
+	tpSchedExit, err := link.Tracepoint("sched", "sched_process_exit", objs.TraceSchedProcessExit, nil)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%s: %v\n", exeName, fmt.Errorf("failed to attach sched_process_exit tracepoint: %w", err))
+		os.Exit(1)
+	}
+	defer tpSchedExit.Close()
 
 	rd, err := ringbuf.NewReader(objs.Events)
 	if err != nil {
@@ -395,7 +470,7 @@ func main() {
 			fmt.Fprintf(os.Stderr, "%s: decoding event: %v\n", exeName, err)
 			continue
 		}
-		fmt.Fprintf(os.Stderr, "%s\n", formatEventLine(ev))
+		fmt.Fprintf(os.Stderr, "%s\n", formatOutputLine(ev, tgid))
 	}
 
 	waitErr := <-done

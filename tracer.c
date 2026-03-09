@@ -1,6 +1,7 @@
 //go:build ignore
 
 #include <linux/bpf.h>
+#include <linux/sched.h>
 #include <asm/unistd.h>
 #include <bpf/bpf_helpers.h>
 
@@ -127,10 +128,17 @@ static const struct syscall_arg_schema scalar_syscall_schemas[] = {
 
 struct {
 	__uint(type, BPF_MAP_TYPE_HASH);
-	__uint(max_entries, 1);
+	__uint(max_entries, 16384);
 	__type(key, __u32);
 	__type(value, __u8);
 } target_pids SEC(".maps");
+
+struct {
+        __uint(type, BPF_MAP_TYPE_ARRAY);
+        __uint(max_entries, 1);
+        __type(key, __u32);
+        __type(value, __u8);
+} follow_forks_config SEC(".maps");
 
 struct {
 	__uint(type, BPF_MAP_TYPE_RINGBUF);
@@ -163,6 +171,62 @@ struct sys_enter_args {
 	long id;
 	unsigned long args[6];
 };
+
+struct clone3_args {
+	__u64 flags;
+};
+
+static __always_inline __u8 is_process_clone(struct syscall_data *state)
+{
+	if (state->syscall_id == __NR_fork || state->syscall_id == __NR_vfork)
+		return 1;
+
+	if (state->syscall_id == __NR_clone) {
+		if ((__u64) state->args[0] & CLONE_THREAD)
+			return 0;
+		return 1;
+	}
+	if (state->syscall_id == __NR_clone3) {
+		struct clone3_args args = { 0 };
+
+		if (bpf_probe_read_user(&args, sizeof(args),
+					(const void *)state->args[0]) < 0)
+			return 1;
+		if (args.flags & CLONE_THREAD)
+			return 0;
+		return 1;
+	}
+
+	return 0;
+}
+
+static __always_inline void track_child_process(struct syscall_data *state,
+						long ret)
+{
+	__u32 child_tgid;
+	__u8 traced = 1;
+        __u32 key = 0;
+	__u8 *follow_forks;
+
+	if (ret <= 0)
+		return;
+        if (!is_process_clone(state))
+                return;
+
+        follow_forks = bpf_map_lookup_elem(&follow_forks_config, &key);
+        if (!follow_forks || *follow_forks == 0)
+                return;
+
+        child_tgid = (__u32) ret;
+        bpf_map_update_elem(&target_pids, &child_tgid, &traced, BPF_ANY);
+}
+
+static __always_inline void cleanup_tid_state(__u32 tid)
+{
+	bpf_map_delete_elem(&inflight_syscalls, &tid);
+	bpf_map_delete_elem(&execve_snapshots, &tid);
+	bpf_map_delete_elem(&tid_sequences, &tid);
+}
 
 static __always_inline void set_syscall_arg_schema(long syscall_id,
 						   struct event *e)
@@ -631,6 +695,7 @@ int trace_sys_exit(struct sys_exit_args *ctx)
 		e->payload[j] = 0;
 
 	set_syscall_arg_schema(state->syscall_id, e);
+	track_child_process(state, ctx->ret);
 
 	if (state->syscall_id == __NR_open) {
 		append_var_string(e, 0, (const char *)state->args[0]);
@@ -679,6 +744,33 @@ int trace_sys_exit(struct sys_exit_args *ctx)
 
 	bpf_ringbuf_submit(e, 0);
 	bpf_map_delete_elem(&inflight_syscalls, &tid);
+
+	if (state->syscall_id == __NR_exit
+	    || state->syscall_id == __NR_exit_group) {
+		cleanup_tid_state(tid);
+		if (state->syscall_id == __NR_exit_group)
+			bpf_map_delete_elem(&target_pids, &tgid);
+	}
+
+	return 0;
+}
+
+SEC("tracepoint/sched/sched_process_exit")
+int trace_sched_process_exit(void *ctx)
+{
+	__u64 pid_tgid = bpf_get_current_pid_tgid();
+	__u32 tgid = pid_tgid >> 32;
+	__u32 tid = (__u32) pid_tgid;
+
+	(void)ctx;
+
+	if (!bpf_map_lookup_elem(&target_pids, &tgid))
+		return 0;
+
+	cleanup_tid_state(tid);
+	if (tid == tgid)
+		bpf_map_delete_elem(&target_pids, &tgid);
+
 	return 0;
 }
 
