@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/cilium/ebpf/link"
 	"github.com/cilium/ebpf/ringbuf"
+	"github.com/spf13/pflag"
 	"golang.org/x/sys/unix"
 )
 
@@ -318,24 +320,55 @@ func usageError(exeName string) error {
 func parseCLIArgs(exeName string, args []string) (cliConfig, error) {
 	cfg := cliConfig{}
 
-	for len(args) > 0 {
-		arg := args[0]
-		if arg == "--" {
-			args = args[1:]
+	for _, arg := range args {
+		if arg == "--" || arg == "-" || !strings.HasPrefix(arg, "-") {
 			break
 		}
-		if !strings.HasPrefix(arg, "-") || arg == "-" {
-			break
-		}
-
-		switch arg {
-		case "-f":
-			cfg.followForks = true
-			args = args[1:]
-		default:
-			return cliConfig{}, fmt.Errorf("unknown option %q", arg)
+		if strings.HasPrefix(arg, "--") {
+			name := strings.SplitN(arg, "=", 2)[0]
+			return cliConfig{}, fmt.Errorf("unknown option %q", name)
 		}
 	}
+
+	fs := pflag.NewFlagSet(exeName, pflag.ContinueOnError)
+	fs.SetInterspersed(false)
+	fs.SetOutput(io.Discard)
+	fs.BoolVarP(&cfg.followForks, "follow-forks", "f", false, "follow child processes created via fork/clone")
+
+	if err := fs.Parse(args); err != nil {
+		var notExistErr *pflag.NotExistError
+		if errors.As(err, &notExistErr) {
+			name := notExistErr.GetSpecifiedName()
+			short := notExistErr.GetSpecifiedShortnames()
+			for _, arg := range args {
+				if arg == "--" || arg == "-" || !strings.HasPrefix(arg, "-") {
+					break
+				}
+				if short != "" {
+					if arg == "-"+short || strings.HasPrefix(arg, "-"+short+"=") {
+						return cliConfig{}, fmt.Errorf("unknown option %q", "-"+short)
+					}
+				}
+				if name != "" {
+					if arg == "-"+name || strings.HasPrefix(arg, "-"+name+"=") {
+						return cliConfig{}, fmt.Errorf("unknown option %q", "-"+name)
+					}
+					if arg == "--"+name || strings.HasPrefix(arg, "--"+name+"=") {
+						return cliConfig{}, fmt.Errorf("unknown option %q", "--"+name)
+					}
+				}
+			}
+			if name != "" {
+				return cliConfig{}, fmt.Errorf("unknown option %q", "--"+name)
+			}
+			if short != "" {
+				return cliConfig{}, fmt.Errorf("unknown option %q", "-"+short)
+			}
+		}
+		return cliConfig{}, err
+	}
+
+	args = fs.Args()
 
 	if len(args) == 0 {
 		return cliConfig{}, usageError(exeName)
