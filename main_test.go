@@ -12,6 +12,7 @@ func TestParseCLIArgs(t *testing.T) {
 		name         string
 		args         []string
 		wantFollow   bool
+		wantTraceOut string
 		wantProgName string
 		wantProgPath string
 		wantProgArgs []string
@@ -20,7 +21,7 @@ func TestParseCLIArgs(t *testing.T) {
 		{
 			name:    "requires program",
 			args:    []string{},
-			wantErr: "usage: litrace [-f] <program> [args...]",
+			wantErr: "usage: litrace [-f] [-o FILE] <program> [args...]",
 		},
 		{
 			name:    "rejects unknown option",
@@ -31,6 +32,14 @@ func TestParseCLIArgs(t *testing.T) {
 			name:         "supports -f before program",
 			args:         []string{"-f", "/bin/echo", "hi"},
 			wantFollow:   true,
+			wantProgName: "/bin/echo",
+			wantProgPath: "/bin/echo",
+			wantProgArgs: []string{"hi"},
+		},
+		{
+			name:         "supports -o trace output file",
+			args:         []string{"-o", "/tmp/litrace.out", "/bin/echo", "hi"},
+			wantTraceOut: "/tmp/litrace.out",
 			wantProgName: "/bin/echo",
 			wantProgPath: "/bin/echo",
 			wantProgArgs: []string{"hi"},
@@ -62,6 +71,9 @@ func TestParseCLIArgs(t *testing.T) {
 			}
 			if cfg.followForks != tt.wantFollow {
 				t.Fatalf("parseCLIArgs() followForks mismatch: got %v want %v", cfg.followForks, tt.wantFollow)
+			}
+			if cfg.traceOutputPath != tt.wantTraceOut {
+				t.Fatalf("parseCLIArgs() traceOutputPath mismatch: got %q want %q", cfg.traceOutputPath, tt.wantTraceOut)
 			}
 			if cfg.programName != tt.wantProgName {
 				t.Fatalf("parseCLIArgs() programName mismatch: got %q want %q", cfg.programName, tt.wantProgName)

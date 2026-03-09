@@ -307,14 +307,15 @@ func formatOutputLine(ev event, rootTGID uint32) string {
 }
 
 type cliConfig struct {
-	followForks bool
-	programName string
-	programPath string
-	programArgs []string
+	followForks     bool
+	traceOutputPath string
+	programName     string
+	programPath     string
+	programArgs     []string
 }
 
 func usageError(exeName string) error {
-	return fmt.Errorf("usage: %s [-f] <program> [args...]", exeName)
+	return fmt.Errorf("usage: %s [-f] [-o FILE] <program> [args...]", exeName)
 }
 
 func parseCLIArgs(exeName string, args []string) (cliConfig, error) {
@@ -334,6 +335,7 @@ func parseCLIArgs(exeName string, args []string) (cliConfig, error) {
 	fs.SetInterspersed(false)
 	fs.SetOutput(io.Discard)
 	fs.BoolVarP(&cfg.followForks, "follow-forks", "f", false, "follow child processes created via fork/clone")
+	fs.StringVarP(&cfg.traceOutputPath, "output", "o", "", "write trace output to FILE")
 
 	if err := fs.Parse(args); err != nil {
 		var notExistErr *pflag.NotExistError
@@ -392,6 +394,17 @@ func main() {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%s\n", err)
 		os.Exit(1)
+	}
+
+	traceOutput := io.Writer(os.Stderr)
+	if cfg.traceOutputPath != "" {
+		file, err := os.Create(cfg.traceOutputPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%s: %v\n", exeName, fmt.Errorf("failed to open trace output %s: %w", cfg.traceOutputPath, err))
+			os.Exit(1)
+		}
+		defer file.Close()
+		traceOutput = file
 	}
 
 	cmd := exec.Command(cfg.programPath, cfg.programArgs...)
@@ -503,7 +516,7 @@ func main() {
 			fmt.Fprintf(os.Stderr, "%s: decoding event: %v\n", exeName, err)
 			continue
 		}
-		fmt.Fprintf(os.Stderr, "%s\n", formatOutputLine(ev, tgid))
+		fmt.Fprintf(traceOutput, "%s\n", formatOutputLine(ev, tgid))
 	}
 
 	waitErr := <-done
