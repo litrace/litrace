@@ -1,97 +1,10 @@
 package main
 
 import (
-	"strings"
 	"testing"
 
 	"golang.org/x/sys/unix"
 )
-
-func TestParseCLIArgs(t *testing.T) {
-	tests := []struct {
-		name         string
-		args         []string
-		wantFollow   bool
-		wantTraceOut string
-		wantProgName string
-		wantProgPath string
-		wantProgArgs []string
-		wantErr      string
-	}{
-		{
-			name:    "requires program",
-			args:    []string{},
-			wantErr: "usage: litrace [-f] [-o FILE] <program> [args...]",
-		},
-		{
-			name:    "rejects unknown option",
-			args:    []string{"-x", "/bin/echo"},
-			wantErr: "unknown option \"-x\"",
-		},
-		{
-			name:         "supports -f before program",
-			args:         []string{"-f", "/bin/echo", "hi"},
-			wantFollow:   true,
-			wantProgName: "/bin/echo",
-			wantProgPath: "/bin/echo",
-			wantProgArgs: []string{"hi"},
-		},
-		{
-			name:         "supports -o trace output file",
-			args:         []string{"-o", "/tmp/litrace.out", "/bin/echo", "hi"},
-			wantTraceOut: "/tmp/litrace.out",
-			wantProgName: "/bin/echo",
-			wantProgPath: "/bin/echo",
-			wantProgArgs: []string{"hi"},
-		},
-		{
-			name:         "supports -- to stop option parsing",
-			args:         []string{"--", "/bin/echo", "ok"},
-			wantProgName: "/bin/echo",
-			wantProgPath: "/bin/echo",
-			wantProgArgs: []string{"ok"},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cfg, err := parseCLIArgs("litrace", tt.args)
-			if tt.wantErr != "" {
-				if err == nil {
-					t.Fatalf("parseCLIArgs() expected error %q, got nil", tt.wantErr)
-				}
-				if !strings.Contains(err.Error(), tt.wantErr) {
-					t.Fatalf("parseCLIArgs() error mismatch: got %q want substring %q", err, tt.wantErr)
-				}
-				return
-			}
-
-			if err != nil {
-				t.Fatalf("parseCLIArgs() unexpected error: %v", err)
-			}
-			if cfg.followForks != tt.wantFollow {
-				t.Fatalf("parseCLIArgs() followForks mismatch: got %v want %v", cfg.followForks, tt.wantFollow)
-			}
-			if cfg.traceOutputPath != tt.wantTraceOut {
-				t.Fatalf("parseCLIArgs() traceOutputPath mismatch: got %q want %q", cfg.traceOutputPath, tt.wantTraceOut)
-			}
-			if cfg.programName != tt.wantProgName {
-				t.Fatalf("parseCLIArgs() programName mismatch: got %q want %q", cfg.programName, tt.wantProgName)
-			}
-			if cfg.programPath != tt.wantProgPath {
-				t.Fatalf("parseCLIArgs() programPath mismatch: got %q want %q", cfg.programPath, tt.wantProgPath)
-			}
-			if len(cfg.programArgs) != len(tt.wantProgArgs) {
-				t.Fatalf("parseCLIArgs() programArgs length mismatch: got %d want %d", len(cfg.programArgs), len(tt.wantProgArgs))
-			}
-			for i := range cfg.programArgs {
-				if cfg.programArgs[i] != tt.wantProgArgs[i] {
-					t.Fatalf("parseCLIArgs() programArgs[%d] mismatch: got %q want %q", i, cfg.programArgs[i], tt.wantProgArgs[i])
-				}
-			}
-		})
-	}
-}
 
 func TestSimpleArgsDecode(t *testing.T) {
 	tests := []struct {

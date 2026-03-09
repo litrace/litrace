@@ -18,8 +18,8 @@ import (
 
 	"github.com/cilium/ebpf/link"
 	"github.com/cilium/ebpf/ringbuf"
-	"github.com/spf13/pflag"
 	"golang.org/x/sys/unix"
+	"litrace/internal/cli"
 )
 
 type event struct {
@@ -306,115 +306,34 @@ func formatOutputLine(ev event, rootTGID uint32) string {
 	return formatEventPrefix(ev, rootTGID) + formatEventLine(ev)
 }
 
-type cliConfig struct {
-	followForks     bool
-	traceOutputPath string
-	programName     string
-	programPath     string
-	programArgs     []string
-}
-
-func usageError(exeName string) error {
-	return fmt.Errorf("usage: %s [-f] [-o FILE] <program> [args...]", exeName)
-}
-
-func parseCLIArgs(exeName string, args []string) (cliConfig, error) {
-	cfg := cliConfig{}
-
-	for _, arg := range args {
-		if arg == "--" || arg == "-" || !strings.HasPrefix(arg, "-") {
-			break
-		}
-		if strings.HasPrefix(arg, "--") {
-			name := strings.SplitN(arg, "=", 2)[0]
-			return cliConfig{}, fmt.Errorf("unknown option %q", name)
-		}
-	}
-
-	fs := pflag.NewFlagSet(exeName, pflag.ContinueOnError)
-	fs.SetInterspersed(false)
-	fs.SetOutput(io.Discard)
-	fs.BoolVarP(&cfg.followForks, "follow-forks", "f", false, "follow child processes created via fork/clone")
-	fs.StringVarP(&cfg.traceOutputPath, "output", "o", "", "write trace output to FILE")
-
-	if err := fs.Parse(args); err != nil {
-		var notExistErr *pflag.NotExistError
-		if errors.As(err, &notExistErr) {
-			name := notExistErr.GetSpecifiedName()
-			short := notExistErr.GetSpecifiedShortnames()
-			for _, arg := range args {
-				if arg == "--" || arg == "-" || !strings.HasPrefix(arg, "-") {
-					break
-				}
-				if short != "" {
-					if arg == "-"+short || strings.HasPrefix(arg, "-"+short+"=") {
-						return cliConfig{}, fmt.Errorf("unknown option %q", "-"+short)
-					}
-				}
-				if name != "" {
-					if arg == "-"+name || strings.HasPrefix(arg, "-"+name+"=") {
-						return cliConfig{}, fmt.Errorf("unknown option %q", "-"+name)
-					}
-					if arg == "--"+name || strings.HasPrefix(arg, "--"+name+"=") {
-						return cliConfig{}, fmt.Errorf("unknown option %q", "--"+name)
-					}
-				}
-			}
-			if name != "" {
-				return cliConfig{}, fmt.Errorf("unknown option %q", "--"+name)
-			}
-			if short != "" {
-				return cliConfig{}, fmt.Errorf("unknown option %q", "-"+short)
-			}
-		}
-		return cliConfig{}, err
-	}
-
-	args = fs.Args()
-
-	if len(args) == 0 {
-		return cliConfig{}, usageError(exeName)
-	}
-
-	path, err := exec.LookPath(args[0])
-	if err != nil {
-		return cliConfig{}, fmt.Errorf("%s: %w", args[0], err)
-	}
-
-	cfg.programName = args[0]
-	cfg.programPath = path
-	cfg.programArgs = args[1:]
-	return cfg, nil
-}
-
 func main() {
 	exeName := os.Args[0]
 
-	cfg, err := parseCLIArgs(exeName, os.Args[1:])
+	cfg, err := cli.ParseArgs(exeName, os.Args[1:])
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%s\n", err)
 		os.Exit(1)
 	}
 
 	traceOutput := io.Writer(os.Stderr)
-	if cfg.traceOutputPath != "" {
-		file, err := os.Create(cfg.traceOutputPath)
+	if cfg.TraceOutputPath != "" {
+		file, err := os.Create(cfg.TraceOutputPath)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "%s: %v\n", exeName, fmt.Errorf("failed to open trace output %s: %w", cfg.traceOutputPath, err))
+			fmt.Fprintf(os.Stderr, "%s: %v\n", exeName, fmt.Errorf("failed to open trace output %s: %w", cfg.TraceOutputPath, err))
 			os.Exit(1)
 		}
 		defer file.Close()
 		traceOutput = file
 	}
 
-	cmd := exec.Command(cfg.programPath, cfg.programArgs...)
+	cmd := exec.Command(cfg.ProgramPath, cfg.ProgramArgs...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin
 	cmd.SysProcAttr = &syscall.SysProcAttr{Ptrace: true, Setpgid: true}
 
 	if err := cmd.Start(); err != nil {
-		fmt.Fprintf(os.Stderr, "%s: %v\n", exeName, fmt.Errorf("failed to start %s: %w", cfg.programName, err))
+		fmt.Fprintf(os.Stderr, "%s: %v\n", exeName, fmt.Errorf("failed to start %s: %w", cfg.ProgramName, err))
 		os.Exit(1)
 	}
 
@@ -442,7 +361,7 @@ func main() {
 	val := uint8(1)
 	followForksKey := uint32(0)
 	followForksVal := uint8(0)
-	if cfg.followForks {
+	if cfg.FollowForks {
 		followForksVal = 1
 	}
 	if err := objs.FollowForksConfig.Put(followForksKey, followForksVal); err != nil {
