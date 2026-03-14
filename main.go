@@ -1,11 +1,8 @@
 package main
 
-//go:generate go tool bpf2go tracer tracer.c
-
 import (
 	"bytes"
 	"encoding/binary"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -16,9 +13,8 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/cilium/ebpf/link"
-	"github.com/cilium/ebpf/ringbuf"
 	"golang.org/x/sys/unix"
+	"litrace/internal/bpf"
 	"litrace/internal/cli"
 )
 
@@ -350,62 +346,16 @@ func main() {
 		os.Exit(1)
 	}
 
-	objs := tracerObjects{}
-	if err := loadTracerObjects(&objs, nil); err != nil {
-		fmt.Fprintf(os.Stderr, "%s: %v\n", exeName, fmt.Errorf("failed to load BPF objects: %w", err))
-		os.Exit(1)
-	}
-	defer objs.Close()
-
 	tgid := uint32(pid)
-	val := uint8(1)
-	followForksKey := uint32(0)
-	followForksVal := uint8(0)
-	if cfg.FollowForks {
-		followForksVal = 1
-	}
-	if err := objs.FollowForksConfig.Put(followForksKey, followForksVal); err != nil {
-		fmt.Fprintf(os.Stderr, "%s: %v\n", exeName, fmt.Errorf("failed to set follow-forks config: %w", err))
-		os.Exit(1)
-	}
-	if err := objs.TargetPids.Put(tgid, val); err != nil {
-		fmt.Fprintf(os.Stderr, "%s: %v\n", exeName, fmt.Errorf("failed to populate PID map: %w", err))
-		os.Exit(1)
-	}
-
-	tpEnter, err := link.Tracepoint("raw_syscalls", "sys_enter", objs.TraceSysEnter, nil)
+	handle, err := bpf.NewHandle(tgid, cfg.FollowForks)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "%s: %v\n", exeName, fmt.Errorf("failed to attach sys_enter tracepoint: %w", err))
+		fmt.Fprintf(os.Stderr, "%s: %v\n", exeName, err)
 		os.Exit(1)
 	}
-	defer tpEnter.Close()
-
-	tpExit, err := link.Tracepoint("raw_syscalls", "sys_exit", objs.TraceSysExit, nil)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "%s: %v\n", exeName, fmt.Errorf("failed to attach sys_exit tracepoint: %w", err))
-		os.Exit(1)
-	}
-	defer tpExit.Close()
-
-	tpSchedExit, err := link.Tracepoint("sched", "sched_process_exit", objs.TraceSchedProcessExit, nil)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "%s: %v\n", exeName, fmt.Errorf("failed to attach sched_process_exit tracepoint: %w", err))
-		os.Exit(1)
-	}
-	defer tpSchedExit.Close()
-
-	rd, err := ringbuf.NewReader(objs.Events)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "%s: %v\n", exeName, fmt.Errorf("failed to open ring buffer reader: %w", err))
-		os.Exit(1)
-	}
-	defer rd.Close()
-
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	go func() {
-		<-sigCh
-		syscall.Kill(-pid, syscall.SIGKILL)
+	defer func() {
+		if closeErr := handle.Close(); closeErr != nil {
+			fmt.Fprintf(os.Stderr, "%s: %v\n", exeName, closeErr)
+		}
 	}()
 
 	if err := syscall.PtraceDetach(pid); err != nil {
@@ -414,16 +364,23 @@ func main() {
 	}
 	runtime.UnlockOSThread()
 
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		<-sigCh
+		syscall.Kill(-pid, syscall.SIGKILL)
+	}()
+
 	done := make(chan error, 1)
 	go func() {
 		done <- cmd.Wait()
-		rd.Close()
+		_ = handle.CloseReader()
 	}()
 
 	for {
-		record, err := rd.Read()
+		rawEvent, err := handle.ReadEvent()
 		if err != nil {
-			if errors.Is(err, ringbuf.ErrClosed) {
+			if bpf.IsReaderClosed(err) {
 				break
 			}
 			fmt.Fprintf(os.Stderr, "%s: reading event: %v\n", exeName, err)
@@ -431,7 +388,7 @@ func main() {
 		}
 
 		var ev event
-		if err := binary.Read(bytes.NewReader(record.RawSample), binary.LittleEndian, &ev); err != nil {
+		if err := binary.Read(bytes.NewReader(rawEvent), binary.LittleEndian, &ev); err != nil {
 			fmt.Fprintf(os.Stderr, "%s: decoding event: %v\n", exeName, err)
 			continue
 		}
