@@ -7,6 +7,8 @@ import (
 	"strings"
 	"syscall"
 
+	"litrace/internal/syscalls"
+
 	"golang.org/x/sys/unix"
 )
 
@@ -250,7 +252,7 @@ func formatArgs(ev Event) string {
 }
 
 func formatEventLine(ev Event) string {
-	return fmt.Sprintf("%s(%s) = %s", syscallName(ev.SyscallID), formatArgs(ev), formatRet(ev.Ret))
+	return fmt.Sprintf("%s(%s) = %s", syscalls.Name(ev.SyscallID), formatArgs(ev), formatRet(ev.Ret))
 }
 
 func formatEventPrefix(ev Event, rootTGID uint32) string {
