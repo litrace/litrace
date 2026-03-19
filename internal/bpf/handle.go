@@ -8,9 +8,16 @@ import (
 	"github.com/cilium/ebpf/ringbuf"
 )
 
+type HandleConfig struct {
+	FollowForks     bool
+	TraceSyscallIDs map[int64]struct{}
+}
+
 type Handle struct {
 	objs         tracerObjects
 	objectsReady bool
+
+	config HandleConfig
 
 	tpEnter     link.Link
 	tpExit      link.Link
@@ -19,29 +26,18 @@ type Handle struct {
 	reader *ringbuf.Reader
 }
 
-func NewHandle(tgid uint32, followForks bool) (_ *Handle, err error) {
-	handle := &Handle{}
+func NewHandle(tgid uint32, cfg HandleConfig) (_ *Handle, err error) {
+	handle := &Handle{config: normalizeHandleConfig(cfg)}
 	defer func() {
 		if err != nil {
 			_ = handle.Close()
 		}
 	}()
 
-	if err := loadTracerObjects(&handle.objs, nil); err != nil {
+	if err := applyConfig(&handle.objs, tgid, handle.config); err != nil {
 		return nil, fmt.Errorf("failed to load BPF objects: %w", err)
 	}
 	handle.objectsReady = true
-
-	followForksVal := uint8(0)
-	if followForks {
-		followForksVal = 1
-	}
-	if err := handle.objs.FollowForksConfig.Put(uint32(0), followForksVal); err != nil {
-		return nil, fmt.Errorf("failed to set follow-forks config: %w", err)
-	}
-	if err := handle.objs.TargetPids.Put(tgid, uint8(1)); err != nil {
-		return nil, fmt.Errorf("failed to populate PID map: %w", err)
-	}
 
 	handle.tpEnter, err = link.Tracepoint("raw_syscalls", "sys_enter", handle.objs.TraceSysEnter, nil)
 	if err != nil {
@@ -64,6 +60,66 @@ func NewHandle(tgid uint32, followForks bool) (_ *Handle, err error) {
 	}
 
 	return handle, nil
+}
+
+func normalizeHandleConfig(cfg HandleConfig) HandleConfig {
+	normalized := cfg
+	normalized.TraceSyscallIDs = make(map[int64]struct{}, len(cfg.TraceSyscallIDs))
+	for id := range cfg.TraceSyscallIDs {
+		normalized.TraceSyscallIDs[id] = struct{}{}
+	}
+	return normalized
+}
+
+func applyConfig(objs *tracerObjects, tgid uint32, cfg HandleConfig) error {
+	spec, err := loadTracer()
+	if err != nil {
+		return err
+	}
+
+	followForks := uint8(0)
+	if cfg.FollowForks {
+		followForks = 1
+	}
+
+	followForksVar, ok := spec.Variables["follow_forks"]
+	if !ok {
+		return fmt.Errorf("missing runtime constant %q", "follow_forks")
+	}
+	if err := followForksVar.Set(followForks); err != nil {
+		return fmt.Errorf("set runtime constant %q: %w", "follow_forks", err)
+	}
+
+	traceFilterEnabled := uint8(0)
+	if len(cfg.TraceSyscallIDs) > 0 {
+		traceFilterEnabled = 1
+	}
+
+	traceFilterVar, ok := spec.Variables["trace_filter_enabled"]
+	if !ok {
+		return fmt.Errorf("missing runtime constant %q", "trace_filter_enabled")
+	}
+	if err := traceFilterVar.Set(traceFilterEnabled); err != nil {
+		return fmt.Errorf("set runtime constant %q: %w", "trace_filter_enabled", err)
+	}
+
+	if err := spec.LoadAndAssign(objs, nil); err != nil {
+		return err
+	}
+
+	if traceFilterEnabled != 0 {
+		for syscallID := range cfg.TraceSyscallIDs {
+			if err := objs.TraceSyscallFilter.Put(uint32(syscallID), uint8(1)); err != nil {
+				return fmt.Errorf("failed to populate trace syscall filter map: %w", err)
+			}
+		}
+	}
+
+	if err := objs.TargetPids.Put(tgid, uint8(1)); err != nil {
+		return fmt.Errorf("failed to populate PID map: %w", err)
+	}
+
+	return nil
 }
 
 func (h *Handle) ReadEvent() ([]byte, error) {

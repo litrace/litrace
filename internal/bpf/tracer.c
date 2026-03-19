@@ -126,6 +126,9 @@ static const struct syscall_arg_schema scalar_syscall_schemas[] = {
 	 },
 };
 
+volatile const __u8 follow_forks = 0;
+volatile const __u8 trace_filter_enabled = 0;
+
 struct {
 	__uint(type, BPF_MAP_TYPE_HASH);
 	__uint(max_entries, 16384);
@@ -134,11 +137,11 @@ struct {
 } target_pids SEC(".maps");
 
 struct {
-        __uint(type, BPF_MAP_TYPE_ARRAY);
-        __uint(max_entries, 1);
-        __type(key, __u32);
-        __type(value, __u8);
-} follow_forks_config SEC(".maps");
+	__uint(type, BPF_MAP_TYPE_HASH);
+	__uint(max_entries, 512);
+	__type(key, __u32);
+	__type(value, __u8);
+} trace_syscall_filter SEC(".maps");
 
 struct {
 	__uint(type, BPF_MAP_TYPE_RINGBUF);
@@ -205,20 +208,16 @@ static __always_inline void track_child_process(struct syscall_data *state,
 {
 	__u32 child_tgid;
 	__u8 traced = 1;
-        __u32 key = 0;
-	__u8 *follow_forks;
 
 	if (ret <= 0)
 		return;
-        if (!is_process_clone(state))
-                return;
+	if (!is_process_clone(state))
+		return;
+	if (!follow_forks)
+		return;
 
-        follow_forks = bpf_map_lookup_elem(&follow_forks_config, &key);
-        if (!follow_forks || *follow_forks == 0)
-                return;
-
-        child_tgid = (__u32) ret;
-        bpf_map_update_elem(&target_pids, &child_tgid, &traced, BPF_ANY);
+	child_tgid = (__u32) ret;
+	bpf_map_update_elem(&target_pids, &child_tgid, &traced, BPF_ANY);
 }
 
 static __always_inline void cleanup_tid_state(__u32 tid)
@@ -596,11 +595,20 @@ int trace_sys_enter(struct sys_enter_args *ctx)
 	__u64 pid_tgid = bpf_get_current_pid_tgid();
 	__u32 tgid = pid_tgid >> 32;
 	__u32 tid = (__u32) pid_tgid;
+	__u32 syscall_id = (__u32) ctx->id;
 	__u32 next_seq = 1;
 	__u32 *prev_seq;
+	__u8 *selected_syscall;
 
 	if (!bpf_map_lookup_elem(&target_pids, &tgid))
 		return 0;
+
+	if (trace_filter_enabled) {
+		selected_syscall =
+		    bpf_map_lookup_elem(&trace_syscall_filter, &syscall_id);
+		if (!selected_syscall)
+			return 0;
+	}
 
 	prev_seq = bpf_map_lookup_elem(&tid_sequences, &tid);
 	if (prev_seq)

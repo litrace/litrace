@@ -7,12 +7,15 @@ import (
 	"os/exec"
 	"strings"
 
+	"litrace/internal/syscalls"
+
 	"github.com/spf13/pflag"
 )
 
 type Config struct {
 	FollowForks     bool
 	TraceOutputPath string
+	TraceSyscallIDs map[int64]struct{}
 	ProgramName     string
 	ProgramPath     string
 	ProgramArgs     []string
@@ -23,7 +26,8 @@ func usageError(exeName string) error {
 }
 
 func ParseArgs(exeName string, args []string) (Config, error) {
-	cfg := Config{}
+	cfg := Config{TraceSyscallIDs: make(map[int64]struct{})}
+	var traceExpressions []string
 
 	for _, arg := range args {
 		if arg == "--" || arg == "-" || !strings.HasPrefix(arg, "-") {
@@ -40,6 +44,7 @@ func ParseArgs(exeName string, args []string) (Config, error) {
 	fs.SetOutput(io.Discard)
 	fs.BoolVarP(&cfg.FollowForks, "follow-forks", "f", false, "follow child processes created via fork/clone")
 	fs.StringVarP(&cfg.TraceOutputPath, "output", "o", "", "write trace output to FILE")
+	fs.StringArrayVarP(&traceExpressions, "trace", "e", nil, "trace only specified syscall names")
 
 	if err := fs.Parse(args); err != nil {
 		var notExistErr *pflag.NotExistError
@@ -74,6 +79,12 @@ func ParseArgs(exeName string, args []string) (Config, error) {
 		return Config{}, err
 	}
 
+	ids, err := parseTraceExpressions(traceExpressions)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.TraceSyscallIDs = ids
+
 	args = fs.Args()
 
 	if len(args) == 0 {
@@ -89,4 +100,35 @@ func ParseArgs(exeName string, args []string) (Config, error) {
 	cfg.ProgramPath = path
 	cfg.ProgramArgs = args[1:]
 	return cfg, nil
+}
+
+func parseTraceExpressions(expressions []string) (map[int64]struct{}, error) {
+	ids := make(map[int64]struct{})
+	if len(expressions) == 0 {
+		return ids, nil
+	}
+
+	for _, expression := range expressions {
+		if !strings.HasPrefix(expression, "trace=") {
+			return nil, fmt.Errorf("invalid -e expression %q: expected trace=<syscall[,syscall...]>", expression)
+		}
+
+		selector := strings.TrimPrefix(expression, "trace=")
+		if selector == "" {
+			return nil, fmt.Errorf("invalid -e expression %q: empty trace selector", expression)
+		}
+
+		for _, syscallName := range strings.Split(selector, ",") {
+			if syscallName == "" {
+				return nil, fmt.Errorf("invalid -e expression %q: empty syscall name", expression)
+			}
+			syscallID, ok := syscalls.ID(syscallName)
+			if !ok {
+				return nil, fmt.Errorf("unknown syscall %q in -e trace selector", syscallName)
+			}
+			ids[syscallID] = struct{}{}
+		}
+	}
+
+	return ids, nil
 }

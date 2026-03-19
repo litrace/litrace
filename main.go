@@ -59,7 +59,10 @@ func main() {
 	}
 
 	tgid := uint32(pid)
-	handle, err := bpf.NewHandle(tgid, cfg.FollowForks)
+	handle, err := bpf.NewHandle(tgid, bpf.HandleConfig{
+		FollowForks:     cfg.FollowForks,
+		TraceSyscallIDs: cfg.TraceSyscallIDs,
+	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%s: %v\n", exeName, err)
 		os.Exit(1)
