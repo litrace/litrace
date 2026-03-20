@@ -78,6 +78,8 @@ struct syscall_data {
 	long syscall_id;
 	unsigned long args[6];
 	__u32 seq;
+	__u8 selected;
+	__u8 reserved[3];
 };
 
 struct syscall_arg_schema {
@@ -210,6 +212,17 @@ static __always_inline __u8 is_process_clone(struct syscall_data *state)
 	}
 
 	return 0;
+}
+
+static __always_inline __u8 should_track_unselected_syscall(long syscall_id)
+{
+	struct syscall_data state = { 0 };
+
+	state.syscall_id = syscall_id;
+	if (!follow_forks)
+		return 0;
+
+	return is_process_clone(&state);
 }
 
 static __always_inline void track_child_process(struct syscall_data *state,
@@ -608,6 +621,7 @@ int trace_sys_enter(struct sys_enter_args *ctx)
 	__u32 next_seq = 1;
 	__u32 *prev_seq;
 	__u8 *selected_syscall;
+	__u8 selected = 1;
 
 	if (!bpf_map_lookup_elem(&target_pids, &tgid))
 		return 0;
@@ -615,8 +629,11 @@ int trace_sys_enter(struct sys_enter_args *ctx)
 	if (trace_filter_enabled) {
 		selected_syscall =
 		    bpf_map_lookup_elem(&trace_syscall_filter, &syscall_id);
-		if (!selected_syscall)
-			return 0;
+		if (!selected_syscall) {
+			selected = 0;
+			if (!should_track_unselected_syscall(ctx->id))
+				return 0;
+		}
 	}
 
 	prev_seq = bpf_map_lookup_elem(&tid_sequences, &tid);
@@ -630,6 +647,7 @@ int trace_sys_enter(struct sys_enter_args *ctx)
 	state.ts = bpf_ktime_get_ns();
 	state.syscall_id = ctx->id;
 	state.seq = next_seq;
+	state.selected = selected;
 
 	state.args[0] = ctx->args[0];
 	state.args[1] = ctx->args[1];
@@ -681,6 +699,12 @@ int trace_sys_exit(struct sys_exit_args *ctx)
 	if (!state)
 		return 0;
 
+	track_child_process(state, ctx->ret);
+	if (!state->selected) {
+		bpf_map_delete_elem(&inflight_syscalls, &tid);
+		return 0;
+	}
+
 	struct event *e = bpf_ringbuf_reserve(&events, sizeof(*e), 0);
 	if (!e)
 		return 0;
@@ -712,8 +736,6 @@ int trace_sys_exit(struct sys_exit_args *ctx)
 		e->payload[j] = 0;
 
 	set_syscall_arg_schema(state->syscall_id, e);
-	track_child_process(state, ctx->ret);
-
 	if (state->syscall_id == __NR_open) {
 		append_var_string(e, 0, (const char *)state->args[0]);
 		e->arg_types[0] = VAR_ARG_STRING;
