@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"strconv"
 	"strings"
 
 	"litrace/internal/syscalls"
@@ -16,18 +17,20 @@ type Config struct {
 	FollowForks     bool
 	TraceOutputPath string
 	TraceSyscallIDs map[int64]struct{}
+	AttachPIDs      []int
 	ProgramName     string
 	ProgramPath     string
 	ProgramArgs     []string
 }
 
 func usageError(exeName string) error {
-	return fmt.Errorf("usage: %s [-f] [-o FILE] <program> [args...]", exeName)
+	return fmt.Errorf("usage: %s [-f] [-o FILE] [-p PID[,PID...]] <program> [args...]", exeName)
 }
 
 func ParseArgs(exeName string, args []string) (Config, error) {
 	cfg := Config{TraceSyscallIDs: make(map[int64]struct{})}
 	var traceExpressions []string
+	var attachExpressions []string
 
 	for _, arg := range args {
 		if arg == "--" || arg == "-" || !strings.HasPrefix(arg, "-") {
@@ -44,6 +47,7 @@ func ParseArgs(exeName string, args []string) (Config, error) {
 	fs.SetOutput(io.Discard)
 	fs.BoolVarP(&cfg.FollowForks, "follow-forks", "f", false, "follow child processes created via fork/clone")
 	fs.StringVarP(&cfg.TraceOutputPath, "output", "o", "", "write trace output to FILE")
+	fs.StringArrayVarP(&attachExpressions, "attach", "p", nil, "trace existing processes by PID")
 	fs.StringArrayVarP(&traceExpressions, "trace", "e", nil, "trace only specified syscall names")
 
 	if err := fs.Parse(args); err != nil {
@@ -85,7 +89,20 @@ func ParseArgs(exeName string, args []string) (Config, error) {
 	}
 	cfg.TraceSyscallIDs = ids
 
+	attachPIDs, err := parseAttachExpressions(attachExpressions)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.AttachPIDs = attachPIDs
+
 	args = fs.Args()
+
+	if len(cfg.AttachPIDs) > 0 {
+		if len(args) != 0 {
+			return Config{}, fmt.Errorf("cannot use -p with a program")
+		}
+		return cfg, nil
+	}
 
 	if len(args) == 0 {
 		return Config{}, usageError(exeName)
@@ -100,6 +117,38 @@ func ParseArgs(exeName string, args []string) (Config, error) {
 	cfg.ProgramPath = path
 	cfg.ProgramArgs = args[1:]
 	return cfg, nil
+}
+
+func parseAttachExpressions(expressions []string) ([]int, error) {
+	if len(expressions) == 0 {
+		return nil, nil
+	}
+
+	seen := make(map[int]struct{})
+	pids := make([]int, 0)
+	for _, expression := range expressions {
+		if expression == "" {
+			return nil, fmt.Errorf("invalid -p expression %q: empty PID list", expression)
+		}
+
+		for _, token := range strings.Split(expression, ",") {
+			if token == "" {
+				return nil, fmt.Errorf("invalid -p expression %q: empty PID", expression)
+			}
+
+			pid, err := strconv.Atoi(token)
+			if err != nil || pid <= 0 {
+				return nil, fmt.Errorf("invalid -p PID %q", token)
+			}
+			if _, ok := seen[pid]; ok {
+				continue
+			}
+			seen[pid] = struct{}{}
+			pids = append(pids, pid)
+		}
+	}
+
+	return pids, nil
 }
 
 func parseTraceExpressions(expressions []string) (map[int64]struct{}, error) {

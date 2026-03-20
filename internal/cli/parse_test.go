@@ -23,6 +23,7 @@ func TestParseArgs(t *testing.T) {
 	tests := []struct {
 		name         string
 		args         []string
+		wantAttach   []int
 		wantFollow   bool
 		wantTraceOut string
 		wantProgName string
@@ -33,7 +34,7 @@ func TestParseArgs(t *testing.T) {
 		{
 			name:    "requires program",
 			args:    []string{},
-			wantErr: "usage: litrace [-f] [-o FILE] <program> [args...]",
+			wantErr: "usage: litrace [-f] [-o FILE] [-p PID[,PID...]] <program> [args...]",
 		},
 		{
 			name:    "rejects unknown option",
@@ -62,6 +63,16 @@ func TestParseArgs(t *testing.T) {
 			wantProgName: "/bin/echo",
 			wantProgPath: "/bin/echo",
 			wantProgArgs: []string{"ok"},
+		},
+		{
+			name:       "supports attach mode without program",
+			args:       []string{"-p", "123"},
+			wantAttach: []int{123},
+		},
+		{
+			name:    "rejects mixing attach mode with program",
+			args:    []string{"-p", "123", "/bin/echo"},
+			wantErr: "cannot use -p with a program",
 		},
 	}
 
@@ -93,6 +104,14 @@ func TestParseArgs(t *testing.T) {
 			if len(cfg.TraceSyscallIDs) != 0 {
 				t.Fatalf("ParseArgs() TraceSyscallIDs length mismatch: got %d want %d", len(cfg.TraceSyscallIDs), 0)
 			}
+			if len(cfg.AttachPIDs) != len(tt.wantAttach) {
+				t.Fatalf("ParseArgs() AttachPIDs length mismatch: got %d want %d", len(cfg.AttachPIDs), len(tt.wantAttach))
+			}
+			for i := range cfg.AttachPIDs {
+				if cfg.AttachPIDs[i] != tt.wantAttach[i] {
+					t.Fatalf("ParseArgs() AttachPIDs[%d] mismatch: got %d want %d", i, cfg.AttachPIDs[i], tt.wantAttach[i])
+				}
+			}
 			if cfg.ProgramName != tt.wantProgName {
 				t.Fatalf("ParseArgs() ProgramName mismatch: got %q want %q", cfg.ProgramName, tt.wantProgName)
 			}
@@ -106,6 +125,89 @@ func TestParseArgs(t *testing.T) {
 				if cfg.ProgramArgs[i] != tt.wantProgArgs[i] {
 					t.Fatalf("ParseArgs() ProgramArgs[%d] mismatch: got %q want %q", i, cfg.ProgramArgs[i], tt.wantProgArgs[i])
 				}
+			}
+		})
+	}
+}
+
+func TestParseArgsAttachFilter(t *testing.T) {
+	tests := []struct {
+		name       string
+		args       []string
+		wantPIDs   []int
+		wantErr    string
+		wantTrace  []int64
+	}{
+		{
+			name:      "single attach pid",
+			args:      []string{"-p", "42"},
+			wantPIDs:  []int{42},
+		},
+		{
+			name:      "comma separated attach pids",
+			args:      []string{"-p", "42,84"},
+			wantPIDs:  []int{42, 84},
+		},
+		{
+			name:      "repeated attach expressions deduplicate",
+			args:      []string{"-p", "42,84", "-p", "84", "-p", "126"},
+			wantPIDs:  []int{42, 84, 126},
+		},
+		{
+			name:      "attach mode can combine with trace filter",
+			args:      []string{"-p", "42", "-e", "trace=read"},
+			wantPIDs:  []int{42},
+			wantTrace: []int64{0},
+		},
+		{
+			name:    "empty attach expression",
+			args:    []string{"-p", ""},
+			wantErr: "empty PID list",
+		},
+		{
+			name:    "empty pid token",
+			args:    []string{"-p", "42,,84"},
+			wantErr: "empty PID",
+		},
+		{
+			name:    "non numeric pid",
+			args:    []string{"-p", "abc"},
+			wantErr: "invalid -p PID \"abc\"",
+		},
+		{
+			name:    "non positive pid",
+			args:    []string{"-p", "0"},
+			wantErr: "invalid -p PID \"0\"",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg, err := ParseArgs("litrace", tt.args)
+			if tt.wantErr != "" {
+				if err == nil {
+					t.Fatalf("ParseArgs() expected error containing %q, got nil", tt.wantErr)
+				}
+				if !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("ParseArgs() error mismatch: got %q want substring %q", err, tt.wantErr)
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("ParseArgs() unexpected error: %v", err)
+			}
+			if len(cfg.AttachPIDs) != len(tt.wantPIDs) {
+				t.Fatalf("ParseArgs() AttachPIDs length mismatch: got %d want %d", len(cfg.AttachPIDs), len(tt.wantPIDs))
+			}
+			for i := range cfg.AttachPIDs {
+				if cfg.AttachPIDs[i] != tt.wantPIDs[i] {
+					t.Fatalf("ParseArgs() AttachPIDs[%d] mismatch: got %d want %d", i, cfg.AttachPIDs[i], tt.wantPIDs[i])
+				}
+			}
+			requireTraceIDs(t, cfg.TraceSyscallIDs, tt.wantTrace...)
+			if cfg.ProgramName != "" || cfg.ProgramPath != "" || len(cfg.ProgramArgs) != 0 {
+				t.Fatalf("ParseArgs() expected empty program fields in attach mode, got ProgramName=%q ProgramPath=%q ProgramArgs=%v", cfg.ProgramName, cfg.ProgramPath, cfg.ProgramArgs)
 			}
 		})
 	}

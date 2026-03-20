@@ -26,7 +26,7 @@ type Handle struct {
 	reader *ringbuf.Reader
 }
 
-func NewHandle(tgid uint32, cfg HandleConfig) (_ *Handle, err error) {
+func NewHandle(targetTGIDs []uint32, cfg HandleConfig) (_ *Handle, err error) {
 	handle := &Handle{config: normalizeHandleConfig(cfg)}
 	defer func() {
 		if err != nil {
@@ -34,7 +34,7 @@ func NewHandle(tgid uint32, cfg HandleConfig) (_ *Handle, err error) {
 		}
 	}()
 
-	if err := applyConfig(&handle.objs, tgid, handle.config); err != nil {
+	if err := applyConfig(&handle.objs, targetTGIDs, handle.config); err != nil {
 		return nil, fmt.Errorf("failed to load BPF objects: %w", err)
 	}
 	handle.objectsReady = true
@@ -71,7 +71,7 @@ func normalizeHandleConfig(cfg HandleConfig) HandleConfig {
 	return normalized
 }
 
-func applyConfig(objs *tracerObjects, tgid uint32, cfg HandleConfig) error {
+func applyConfig(objs *tracerObjects, targetTGIDs []uint32, cfg HandleConfig) error {
 	spec, err := loadTracer()
 	if err != nil {
 		return err
@@ -115,8 +115,10 @@ func applyConfig(objs *tracerObjects, tgid uint32, cfg HandleConfig) error {
 		}
 	}
 
-	if err := objs.TargetPids.Put(tgid, uint8(1)); err != nil {
-		return fmt.Errorf("failed to populate PID map: %w", err)
+	for _, tgid := range targetTGIDs {
+		if err := objs.TargetPids.Put(tgid, uint8(1)); err != nil {
+			return fmt.Errorf("failed to populate PID map: %w", err)
+		}
 	}
 
 	return nil

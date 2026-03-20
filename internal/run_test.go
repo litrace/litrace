@@ -1,6 +1,7 @@
 package trace
 
 import (
+	"io"
 	"strings"
 	"syscall"
 	"testing"
@@ -15,6 +16,33 @@ func TestRunRequiresTraceOutput(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "trace output writer is required") {
 		t.Fatalf("Run error = %q, want trace output validation error", err)
+	}
+}
+
+func TestRunRequiresLaunchOrAttachTarget(t *testing.T) {
+	t.Parallel()
+
+	_, err := Run(Config{}, Options{TraceOutput: io.Discard})
+	if err == nil {
+		t.Fatal("Run returned nil error, want configuration validation error")
+	}
+	if !strings.Contains(err.Error(), "requires a program path or attach PID") {
+		t.Fatalf("Run error = %q, want configuration validation error", err)
+	}
+}
+
+func TestRunRejectsMixedLaunchAndAttachModes(t *testing.T) {
+	t.Parallel()
+
+	_, err := Run(Config{
+		ProgramPath: "/bin/echo",
+		AttachPIDs:  []int{123},
+	}, Options{TraceOutput: io.Discard})
+	if err == nil {
+		t.Fatal("Run returned nil error, want mixed-mode validation error")
+	}
+	if !strings.Contains(err.Error(), "cannot mix attach PIDs with a launched program") {
+		t.Fatalf("Run error = %q, want mixed-mode validation error", err)
 	}
 }
 
