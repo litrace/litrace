@@ -124,7 +124,16 @@ static const struct syscall_arg_schema scalar_syscall_schemas[] = {
 	 {VAR_ARG_STRING, VAR_ARG_ARGV, ARG_PTR, ARG_NONE, ARG_NONE,
 	  ARG_NONE},
 	 },
+	{
+	 .syscall_id = __NR_umask,
+	 .arg_count = 1,
+	 .arg_types = {ARG_MODE, ARG_NONE, ARG_NONE, ARG_NONE, ARG_NONE,
+		       ARG_NONE},
+	 },
 };
+
+#define SYSCALL_SCHEMA_COUNT \
+    (sizeof(scalar_syscall_schemas) / sizeof(scalar_syscall_schemas[0]))
 
 volatile const __u8 follow_forks = 0;
 volatile const __u8 trace_filter_enabled = 0;
@@ -234,7 +243,7 @@ static __always_inline void set_syscall_arg_schema(long syscall_id,
 	int j;
 
 #pragma unroll
-	for (j = 0; j < 6; j++) {
+	for (j = 0; j < SYSCALL_SCHEMA_COUNT; j++) {
 		const struct syscall_arg_schema *schema =
 		    &scalar_syscall_schemas[j];
 

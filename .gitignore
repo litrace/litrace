@@ -1,3 +1,4 @@
 litrace
 internal/bpf/tracer_bpf*.go
 internal/bpf/tracer_bpf*.o
+tests/fixtures/bin/

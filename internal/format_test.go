@@ -46,6 +46,28 @@ func TestSimpleArgsDecode(t *testing.T) {
 			want: "fchmod(7, 0755) = 0",
 		},
 		{
+			name: "umask mode argument and return octal",
+			ev: event{
+				SyscallID: int64(unix.SYS_UMASK),
+				Ret:       0022,
+				ArgCount:  1,
+				Args:      [6]uint64{0006},
+				ArgTypes:  [6]uint8{argMode},
+			},
+			want: "umask(006) = 022",
+		},
+		{
+			name: "umask error return keeps errno formatting",
+			ev: event{
+				SyscallID: int64(unix.SYS_UMASK),
+				Ret:       -int64(unix.EPERM),
+				ArgCount:  1,
+				Args:      [6]uint64{0006},
+				ArgTypes:  [6]uint8{argMode},
+			},
+			want: "umask(006) = -1 EPERM (operation not permitted)",
+		},
+		{
 			name: "raw fallback for unknown syscall schema",
 			ev: event{
 				SyscallID: 9999,

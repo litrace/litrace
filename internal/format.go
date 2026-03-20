@@ -169,7 +169,7 @@ func formatVarArg(ev Event, idx int) (string, bool) {
 	}
 }
 
-func formatRet(ret int64) string {
+func formatRetDefault(ret int64) string {
 	if ret >= 0 {
 		return fmt.Sprintf("%d", ret)
 	}
@@ -181,8 +181,21 @@ func formatRet(ret int64) string {
 	return fmt.Sprintf("-1 %s (%s)", name, errno.Error())
 }
 
+func formatRet(ev Event) string {
+	if ev.Ret < 0 {
+		return formatRetDefault(ev.Ret)
+	}
+
+	switch ev.SyscallID {
+	case int64(unix.SYS_UMASK):
+		return formatMode(uint64(ev.Ret))
+	}
+
+	return formatRetDefault(ev.Ret)
+}
+
 func formatMode(raw uint64) string {
-	return fmt.Sprintf("0%o", uint32(raw)&0xffff)
+	return fmt.Sprintf("%#03o", uint32(raw)&0xffff)
 }
 
 func formatWhence(raw uint64) string {
@@ -252,7 +265,7 @@ func formatArgs(ev Event) string {
 }
 
 func formatEventLine(ev Event) string {
-	return fmt.Sprintf("%s(%s) = %s", syscalls.Name(ev.SyscallID), formatArgs(ev), formatRet(ev.Ret))
+	return fmt.Sprintf("%s(%s) = %s", syscalls.Name(ev.SyscallID), formatArgs(ev), formatRet(ev))
 }
 
 func formatEventPrefix(ev Event, rootTGID uint32) string {
