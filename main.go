@@ -12,7 +12,54 @@ import (
 	trace "litrace/internal"
 	"litrace/internal/bpf"
 	"litrace/internal/cli"
+
+	"golang.org/x/sys/unix"
 )
+
+type childWaitResult struct {
+	err       error
+	status    syscall.WaitStatus
+	hasStatus bool
+}
+
+func signalName(sig syscall.Signal) string {
+	name := unix.SignalName(unix.Signal(sig))
+	if name != "" {
+		return name
+	}
+	return fmt.Sprintf("SIG%d", sig)
+}
+
+func formatExitLine(ws syscall.WaitStatus) string {
+	if ws.Exited() {
+		return fmt.Sprintf("+++ exited with %d +++", ws.ExitStatus())
+	}
+
+	if ws.Signaled() {
+		line := fmt.Sprintf("+++ killed by %s", signalName(ws.Signal()))
+		if ws.CoreDump() {
+			line += " (core dumped)"
+		}
+		return line + " +++"
+	}
+
+	return "+++ exited with ? +++"
+}
+
+func exitWithWaitStatus(ws syscall.WaitStatus) {
+	if ws.Exited() {
+		os.Exit(ws.ExitStatus())
+	}
+
+	if ws.Signaled() {
+		sig := ws.Signal()
+		signal.Reset(sig)
+		_ = syscall.Kill(syscall.Getpid(), sig)
+		os.Exit(128 + int(sig))
+	}
+
+	os.Exit(1)
+}
 
 func main() {
 	exeName := os.Args[0]
@@ -86,9 +133,17 @@ func main() {
 		syscall.Kill(-pid, syscall.SIGKILL)
 	}()
 
-	done := make(chan error, 1)
+	done := make(chan childWaitResult, 1)
 	go func() {
-		done <- cmd.Wait()
+		waitErr := cmd.Wait()
+		result := childWaitResult{err: waitErr}
+		if cmd.ProcessState != nil {
+			if ws, ok := cmd.ProcessState.Sys().(syscall.WaitStatus); ok {
+				result.status = ws
+				result.hasStatus = true
+			}
+		}
+		done <- result
 		_ = handle.CloseReader()
 	}()
 
@@ -110,12 +165,19 @@ func main() {
 		fmt.Fprintf(traceOutput, "%s\n", trace.FormatOutputLine(ev, tgid))
 	}
 
-	waitErr := <-done
-	if waitErr != nil {
-		if exitErr, ok := waitErr.(*exec.ExitError); ok {
-			os.Exit(exitErr.ExitCode())
+	waitResult := <-done
+	if waitResult.err != nil {
+		if _, ok := waitResult.err.(*exec.ExitError); !ok {
+			fmt.Fprintf(os.Stderr, "%s: %v\n", exeName, fmt.Errorf("failed to wait for child exit: %w", waitResult.err))
+			os.Exit(1)
 		}
-		fmt.Fprintf(os.Stderr, "%s: %v\n", exeName, fmt.Errorf("failed to wait for child exit: %w", waitErr))
+	}
+
+	if !waitResult.hasStatus {
+		fmt.Fprintf(os.Stderr, "%s: %v\n", exeName, fmt.Errorf("failed to determine child wait status"))
 		os.Exit(1)
 	}
+
+	fmt.Fprintf(traceOutput, "%s\n", formatExitLine(waitResult.status))
+	exitWithWaitStatus(waitResult.status)
 }
