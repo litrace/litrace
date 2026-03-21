@@ -69,6 +69,10 @@ func FormatExitLine(ws syscall.WaitStatus) string {
 	return "+++ exited with ? +++"
 }
 
+func FormatAttachLine(pid int) string {
+	return fmt.Sprintf("litrace: Process %d attached", pid)
+}
+
 func Run(cfg Config, opts Options) (ws syscall.WaitStatus, err error) {
 	if opts.TraceOutput == nil {
 		return 0, fmt.Errorf("trace output writer is required")
@@ -97,6 +101,9 @@ func Run(cfg Config, opts Options) (ws syscall.WaitStatus, err error) {
 	if len(cfg.AttachPIDs) > 0 {
 		if err := validateAttachTargets(cfg.AttachPIDs); err != nil {
 			return 0, err
+		}
+		for _, pid := range cfg.AttachPIDs {
+			fmt.Fprintf(opts.Stderr, "%s\n", FormatAttachLine(pid))
 		}
 		rootTGID = rootTracePID(cfg.AttachPIDs, 0)
 		targetTGIDs = traceTargetTGIDs(cfg.AttachPIDs, 0)
