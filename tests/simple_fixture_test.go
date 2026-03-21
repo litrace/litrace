@@ -28,3 +28,7 @@ func TestLseek(t *testing.T) {
 func TestUmask(t *testing.T) {
 	runSimpleFixtureMatch(t, "umask", "trace=umask")
 }
+
+func TestZeroArgBasic(t *testing.T) {
+	runSimpleFixtureMatch(t, "zero_arg", "trace=getpid,getppid,getuid,getgid,sched_yield")
+}

@@ -25,6 +25,15 @@ func TestSimpleArgsDecode(t *testing.T) {
 			want: "close(42) = 0",
 		},
 		{
+			name: "getpid has no arguments",
+			ev: event{
+				SyscallID: int64(unix.SYS_GETPID),
+				Ret:       1234,
+				ArgCount:  0,
+			},
+			want: "getpid() = 1234",
+		},
+		{
 			name: "lseek with symbolic whence",
 			ev: event{
 				SyscallID: int64(unix.SYS_LSEEK),
