@@ -34,6 +34,14 @@ func TestFstat(t *testing.T) {
 	runSimpleFixtureMatch(t, "fstat", "trace=fstat", "-P", "fstat_sample_file")
 }
 
+func TestStat(t *testing.T) {
+	runSimpleFixtureMatch(t, "stat", "trace=stat")
+}
+
+func TestLstat(t *testing.T) {
+	runSimpleFixtureMatch(t, "lstat", "trace=lstat")
+}
+
 func TestOpen(t *testing.T) {
 	requireRoot(t)
 

@@ -1,6 +1,7 @@
 //go:build ignore
 
 #include <linux/bpf.h>
+#include <linux/stat.h>
 #include <linux/sched.h>
 #include <asm/stat.h>
 #include <bpf/bpf_helpers.h>
@@ -143,16 +144,19 @@ static __always_inline void append_var_string(struct event *e,
 					      __u8 arg_index, const char *ptr)
 {
 	__u32 available;
+	__u32 end;
 	int copied;
 	struct var_arg_desc *desc;
+	__u8 slot;
 
-	if (e->var_count >= MAX_VAR_ARGS)
+	if (e->var_count >= 2)
 		return;
 
-	desc = &e->var_desc[e->var_count];
+	slot = e->var_count;
+	desc = &e->var_desc[slot];
 	desc->arg_index = arg_index;
 	desc->flags = VAR_FLAG_NONE;
-	desc->offset = 0;
+	desc->offset = slot == 0 ? 0 : GENERIC_VAR_SLOT_SIZE;
 	desc->length = 0;
 	desc->reserved = 0;
 
@@ -162,14 +166,14 @@ static __always_inline void append_var_string(struct event *e,
 		return;
 	}
 
-	if (e->payload_len > 0) {
-		desc->flags |= VAR_FLAG_TRUNCATED;
-		e->var_count++;
-		return;
-	}
-
-	available = MAX_VAR_PAYLOAD;
-	copied = bpf_probe_read_user_str(&e->payload[0], available, ptr);
+	available = GENERIC_VAR_SLOT_SIZE;
+	if (slot == 0)
+		copied =
+		    bpf_probe_read_user_str(&e->payload[0], available, ptr);
+	else
+		copied =
+		    bpf_probe_read_user_str(&e->payload[GENERIC_VAR_SLOT_SIZE],
+					    available, ptr);
 	if (copied < 0) {
 		desc->flags |= VAR_FLAG_READ_ERROR;
 		e->var_count++;
@@ -181,7 +185,9 @@ static __always_inline void append_var_string(struct event *e,
 
 	if (copied > 0)
 		desc->length = copied - 1;
-	e->payload_len = desc->length;
+	end = desc->offset + desc->length;
+	if (e->payload_len < end)
+		e->payload_len = end;
 	e->var_count++;
 }
 
@@ -191,15 +197,18 @@ static __always_inline void append_var_bytes(struct event *e,
 {
 	__u32 available;
 	__u32 to_copy;
+	__u32 end;
 	struct var_arg_desc *desc;
+	__u8 slot;
 
-	if (e->var_count >= MAX_VAR_ARGS)
+	if (e->var_count >= 2)
 		return;
 
-	desc = &e->var_desc[e->var_count];
+	slot = e->var_count;
+	desc = &e->var_desc[slot];
 	desc->arg_index = arg_index;
 	desc->flags = VAR_FLAG_NONE;
-	desc->offset = 0;
+	desc->offset = slot == 0 ? 0 : GENERIC_VAR_SLOT_SIZE;
 	desc->length = 0;
 	desc->reserved = 0;
 
@@ -209,13 +218,7 @@ static __always_inline void append_var_bytes(struct event *e,
 		return;
 	}
 
-	if (e->payload_len > 0) {
-		desc->flags |= VAR_FLAG_TRUNCATED;
-		e->var_count++;
-		return;
-	}
-
-	available = MAX_VAR_PAYLOAD;
+	available = GENERIC_VAR_SLOT_SIZE;
 	to_copy = available;
 	if ((__u64) to_copy > size) {
 		to_copy = size;
@@ -228,14 +231,25 @@ static __always_inline void append_var_bytes(struct event *e,
 		return;
 	}
 
-	if (bpf_probe_read_user(&e->payload[0], to_copy, ptr) < 0) {
-		desc->flags |= VAR_FLAG_READ_ERROR;
-		e->var_count++;
-		return;
+	if (slot == 0) {
+		if (bpf_probe_read_user(&e->payload[0], to_copy, ptr) < 0) {
+			desc->flags |= VAR_FLAG_READ_ERROR;
+			e->var_count++;
+			return;
+		}
+	} else {
+		if (bpf_probe_read_user
+		    (&e->payload[GENERIC_VAR_SLOT_SIZE], to_copy, ptr) < 0) {
+			desc->flags |= VAR_FLAG_READ_ERROR;
+			e->var_count++;
+			return;
+		}
 	}
 
 	desc->length = to_copy;
-	e->payload_len = to_copy;
+	end = desc->offset + to_copy;
+	if (e->payload_len < end)
+		e->payload_len = end;
 	e->var_count++;
 }
 
@@ -624,6 +638,26 @@ int trace_sys_exit(struct sys_exit_args *ctx)
 		append_var_bytes(e, 1, (const void *)state->args[1],
 				 sizeof(struct stat));
 		e->arg_types[1] = VAR_ARG_BYTES;
+	}
+
+	if ((state->syscall_id == __NR_newstat
+	     || state->syscall_id == __NR_newlstat)
+	    && ctx->ret >= 0) {
+		append_var_bytes(e, 1, (const void *)state->args[1],
+				 sizeof(struct stat));
+		e->arg_types[1] = VAR_ARG_BYTES;
+	}
+
+	if (state->syscall_id == __NR_newfstatat && ctx->ret >= 0) {
+		append_var_bytes(e, 2, (const void *)state->args[2],
+				 sizeof(struct stat));
+		e->arg_types[2] = VAR_ARG_BYTES;
+	}
+
+	if (state->syscall_id == __NR_statx && ctx->ret >= 0) {
+		append_var_bytes(e, 4, (const void *)state->args[4],
+				 sizeof(struct statx));
+		e->arg_types[4] = VAR_ARG_BYTES;
 	}
 
 	if (state->syscall_id == __NR_chdir || state->syscall_id == __NR_unlink) {

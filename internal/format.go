@@ -63,8 +63,20 @@ var syscallFormatters = map[int64]syscallFormatter{
 		formatArg:         formatOpenArg(2, 0),
 		effectiveArgCount: effectiveOpenArgCount(2, 3),
 	},
+	int64(unix.SYS_STAT): {
+		formatArg: formatStatArg(1, formatCapturedStat),
+	},
+	int64(unix.SYS_LSTAT): {
+		formatArg: formatStatArg(1, formatCapturedStat),
+	},
 	int64(unix.SYS_FSTAT): {
-		formatArg: formatFstatArg,
+		formatArg: formatStatArg(1, formatCapturedStat),
+	},
+	int64(unix.SYS_NEWFSTATAT): {
+		formatArg: formatAtStatArg(2, formatCapturedStat),
+	},
+	int64(unix.SYS_STATX): {
+		formatArg: formatAtStatArg(4, formatCapturedStatx),
 	},
 }
 
@@ -225,29 +237,41 @@ func formatVarArg(ev Event, idx int) (string, bool) {
 	}
 }
 
-func formatFstatArg(ev Event, idx int) (string, bool) {
-	if idx != 1 || ev.Ret < 0 {
-		return "", false
-	}
+func formatStatArg(idx int, decode func([]byte) (string, bool)) func(Event, int) (string, bool) {
+	return func(ev Event, argIdx int) (string, bool) {
+		if argIdx != idx || ev.Ret < 0 {
+			return "", false
+		}
 
-	desc, ok := findVarArgDesc(ev, idx)
-	if !ok {
-		return "", false
-	}
-	if desc.Flags != varFlagNone {
-		return "<?>", true
-	}
+		desc, ok := findVarArgDesc(ev, argIdx)
+		if !ok {
+			return "", false
+		}
+		if desc.Flags != varFlagNone {
+			return "<?>", true
+		}
 
-	payload, ok := varPayloadSlice(ev, desc)
-	if !ok {
-		return "<?>", true
-	}
+		payload, ok := varPayloadSlice(ev, desc)
+		if !ok {
+			return "<?>", true
+		}
 
-	rendered, ok := formatCapturedStat(payload)
-	if !ok {
-		return "<?>", true
+		rendered, ok := decode(payload)
+		if !ok {
+			return "<?>", true
+		}
+		return rendered, true
 	}
-	return rendered, true
+}
+
+func formatAtStatArg(resultIdx int, decode func([]byte) (string, bool)) func(Event, int) (string, bool) {
+	statArg := formatStatArg(resultIdx, decode)
+	return func(ev Event, argIdx int) (string, bool) {
+		if argIdx == 0 {
+			return formatDirFD(ev.Args[argIdx]), true
+		}
+		return statArg(ev, argIdx)
+	}
 }
 
 func formatCapturedStat(payload []byte) (string, bool) {
@@ -262,6 +286,21 @@ func formatCapturedStat(payload []byte) (string, bool) {
 	return fmt.Sprintf("{st_mode=%s, st_size=%d, ...}",
 		formatStatMode(uint32(st.Mode)),
 		st.Size,
+	), true
+}
+
+func formatCapturedStatx(payload []byte) (string, bool) {
+	var stx unix.Statx_t
+	size := int(unsafe.Sizeof(stx))
+	if len(payload) < size {
+		return "", false
+	}
+
+	copy(unsafe.Slice((*byte)(unsafe.Pointer(&stx)), size), payload[:size])
+
+	return fmt.Sprintf("{stx_mode=%s, stx_size=%d, ...}",
+		formatStatMode(uint32(stx.Mode)),
+		stx.Size,
 	), true
 }
 

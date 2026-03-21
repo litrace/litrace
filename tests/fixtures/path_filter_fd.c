@@ -50,6 +50,7 @@ main(void)
 		fail("close create match");
 	if (rename(match_seed, match))
 		fail("rename match");
+	printf("rename(\"%s\", \"%s\") = 0\n", match_seed, match);
 
 	fd = open(other_seed, O_CREAT | O_RDONLY, 0600);
 	if (fd == -1)

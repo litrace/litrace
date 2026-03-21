@@ -56,7 +56,8 @@ main(void)
 
 	if (syscall(SYS_newfstatat, dirfd, "target.tmp", &st, 0))
 		fail("newfstatat target");
-	printf("newfstatat(%d, \"target.tmp\", %p, 0) = 0\n", dirfd, (void *) &st);
+	printf("newfstatat(%d, \"target.tmp\", {st_mode=S_IFREG|0600, st_size=%lld, ...}, 0) = 0\n",
+	       dirfd, (long long) st.st_size);
 
 	if (close(dirfd))
 		fail("close dir");

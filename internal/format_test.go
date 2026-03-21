@@ -267,7 +267,7 @@ func TestSimpleArgsDecode(t *testing.T) {
 		{
 			name: "fstat with decoded stat buffer",
 			ev: func() event {
-				payload := encodeStatPayload(t, unix.Stat_t{
+				payload := encodeStatPayload(unix.Stat_t{
 					Mode: unix.S_IFREG | 0644,
 					Size: 131471,
 				})
@@ -289,6 +289,100 @@ func TestSimpleArgsDecode(t *testing.T) {
 				return ev
 			}(),
 			want: "fstat(3, {st_mode=S_IFREG|0644, st_size=131471, ...}) = 0",
+		},
+		{
+			name: "stat with decoded stat buffer",
+			ev: func() event {
+				payload := encodeStatPayload(unix.Stat_t{
+					Mode: unix.S_IFREG | 0644,
+					Size: 42,
+				})
+				ev := event{
+					SyscallID:  int64(unix.SYS_STAT),
+					Ret:        0,
+					ArgCount:   2,
+					ArgTypes:   [6]uint8{varArgString, varArgBytes},
+					VarCount:   2,
+					PayloadLen: uint16(11 + len(payload)),
+				}
+				ev.VarDesc[0] = varArgDesc{ArgIndex: 0, Offset: 0, Length: 11}
+				ev.VarDesc[1] = varArgDesc{ArgIndex: 1, Offset: 11, Length: uint16(len(payload))}
+				copy(ev.Payload[:], []byte("stat.sample"))
+				copy(ev.Payload[11:], payload)
+				return ev
+			}(),
+			want: "stat(\"stat.sample\", {st_mode=S_IFREG|0644, st_size=42, ...}) = 0",
+		},
+		{
+			name: "lstat with decoded stat buffer",
+			ev: func() event {
+				payload := encodeStatPayload(unix.Stat_t{
+					Mode: unix.S_IFLNK | 0777,
+					Size: 12,
+				})
+				ev := event{
+					SyscallID:  int64(unix.SYS_LSTAT),
+					Ret:        0,
+					ArgCount:   2,
+					ArgTypes:   [6]uint8{varArgString, varArgBytes},
+					VarCount:   2,
+					PayloadLen: uint16(12 + len(payload)),
+				}
+				ev.VarDesc[0] = varArgDesc{ArgIndex: 0, Offset: 0, Length: 12}
+				ev.VarDesc[1] = varArgDesc{ArgIndex: 1, Offset: 12, Length: uint16(len(payload))}
+				copy(ev.Payload[:], []byte("lstat.sample"))
+				copy(ev.Payload[12:], payload)
+				return ev
+			}(),
+			want: "lstat(\"lstat.sample\", {st_mode=S_IFLNK|0777, st_size=12, ...}) = 0",
+		},
+		{
+			name: "newfstatat with decoded stat buffer",
+			ev: func() event {
+				payload := encodeStatPayload(unix.Stat_t{
+					Mode: unix.S_IFREG | 0600,
+					Size: 99,
+				})
+				ev := event{
+					SyscallID:  int64(unix.SYS_NEWFSTATAT),
+					Ret:        0,
+					ArgCount:   4,
+					Args:       [6]uint64{uint64(^uint32(99)), 0, 0x7ffd47b78430, 0},
+					ArgTypes:   [6]uint8{argFD, varArgString, varArgBytes, argInt},
+					VarCount:   2,
+					PayloadLen: uint16(16 + len(payload)),
+				}
+				ev.VarDesc[0] = varArgDesc{ArgIndex: 1, Offset: 0, Length: 16}
+				ev.VarDesc[1] = varArgDesc{ArgIndex: 2, Offset: 16, Length: uint16(len(payload))}
+				copy(ev.Payload[:], []byte("/tmp/litrace.txt"))
+				copy(ev.Payload[16:], payload)
+				return ev
+			}(),
+			want: "newfstatat(AT_FDCWD, \"/tmp/litrace.txt\", {st_mode=S_IFREG|0600, st_size=99, ...}, 0) = 0",
+		},
+		{
+			name: "statx with decoded statx buffer",
+			ev: func() event {
+				payload := encodeStatxPayload(unix.Statx_t{
+					Mode: unix.S_IFREG | 0640,
+					Size: 777,
+				})
+				ev := event{
+					SyscallID:  int64(unix.SYS_STATX),
+					Ret:        0,
+					ArgCount:   5,
+					Args:       [6]uint64{uint64(^uint32(99)), 0, 0, uint64(unix.STATX_BASIC_STATS), 0x7ffd47b78430},
+					ArgTypes:   [6]uint8{argFD, varArgString, argInt, argUint, varArgBytes},
+					VarCount:   2,
+					PayloadLen: uint16(16 + len(payload)),
+				}
+				ev.VarDesc[0] = varArgDesc{ArgIndex: 1, Offset: 0, Length: 16}
+				ev.VarDesc[1] = varArgDesc{ArgIndex: 4, Offset: 16, Length: uint16(len(payload))}
+				copy(ev.Payload[:], []byte("/tmp/litrace.txt"))
+				copy(ev.Payload[16:], payload)
+				return ev
+			}(),
+			want: "statx(AT_FDCWD, \"/tmp/litrace.txt\", 0, 2047, {stx_mode=S_IFREG|0640, stx_size=777, ...}) = 0",
 		},
 		{
 			name: "fstat error keeps pointer formatting",
@@ -413,12 +507,17 @@ func TestSimpleArgsDecode(t *testing.T) {
 	}
 }
 
-func encodeStatPayload(t *testing.T, st unix.Stat_t) []byte {
-	t.Helper()
-
+func encodeStatPayload(st unix.Stat_t) []byte {
 	size := int(unsafe.Sizeof(st))
 	buf := make([]byte, size)
 	copy(buf, unsafe.Slice((*byte)(unsafe.Pointer(&st)), size))
+	return buf
+}
+
+func encodeStatxPayload(stx unix.Statx_t) []byte {
+	size := int(unsafe.Sizeof(stx))
+	buf := make([]byte, size)
+	copy(buf, unsafe.Slice((*byte)(unsafe.Pointer(&stx)), size))
 	return buf
 }
 
