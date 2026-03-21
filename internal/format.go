@@ -54,7 +54,32 @@ var openModeFlags = []flagEntry{
 	{value: unix.O_TRUNC, name: "O_TRUNC"},
 }
 
+var mmapProtFlags = []flagEntry{
+	{value: unix.PROT_READ, name: "PROT_READ"},
+	{value: unix.PROT_WRITE, name: "PROT_WRITE"},
+	{value: unix.PROT_EXEC, name: "PROT_EXEC"},
+}
+
+var mmapFlags = []flagEntry{
+	{value: unix.MAP_SHARED, name: "MAP_SHARED"},
+	{value: unix.MAP_PRIVATE, name: "MAP_PRIVATE"},
+	{value: unix.MAP_FIXED, name: "MAP_FIXED"},
+	{value: unix.MAP_ANON, name: "MAP_ANONYMOUS"},
+	{value: unix.MAP_POPULATE, name: "MAP_POPULATE"},
+	{value: unix.MAP_NONBLOCK, name: "MAP_NONBLOCK"},
+	{value: unix.MAP_STACK, name: "MAP_STACK"},
+	{value: unix.MAP_HUGETLB, name: "MAP_HUGETLB"},
+	{value: unix.MAP_DENYWRITE, name: "MAP_DENYWRITE"},
+	{value: unix.MAP_EXECUTABLE, name: "MAP_EXECUTABLE"},
+	{value: unix.MAP_LOCKED, name: "MAP_LOCKED"},
+	{value: unix.MAP_GROWSDOWN, name: "MAP_GROWSDOWN"},
+	{value: unix.MAP_NORESERVE, name: "MAP_NORESERVE"},
+}
+
 var syscallFormatters = map[int64]syscallFormatter{
+	int64(unix.SYS_MMAP): {
+		formatArg: formatMmapArg,
+	},
 	int64(unix.SYS_OPEN): {
 		formatArg:         formatOpenArg(1, -1),
 		effectiveArgCount: effectiveOpenArgCount(1, 2),
@@ -322,6 +347,8 @@ func formatRet(ev Event) string {
 	}
 
 	switch ev.SyscallID {
+	case int64(unix.SYS_MMAP):
+		return formatPtr(uint64(ev.Ret))
 	case int64(unix.SYS_UMASK):
 		return formatMode(uint64(ev.Ret))
 	}
@@ -381,6 +408,13 @@ func formatWhence(raw uint64) string {
 	}
 }
 
+func formatPtr(raw uint64) string {
+	if raw == 0 {
+		return "NULL"
+	}
+	return fmt.Sprintf("0x%x", raw)
+}
+
 func formatEnum(raw uint64, table []enumEntry, fallback func(uint64) string) string {
 	for _, entry := range table {
 		if entry.value == raw {
@@ -420,6 +454,30 @@ func formatDirFD(raw uint64) string {
 		return "AT_FDCWD"
 	}
 	return fmt.Sprintf("%d", fd)
+}
+
+func formatMmapProt(raw uint64) string {
+	if raw == unix.PROT_NONE {
+		return "PROT_NONE"
+	}
+	return formatFlags(raw, "", mmapProtFlags)
+}
+
+func formatMmapFlags(raw uint64) string {
+	return formatFlags(raw, "", mmapFlags)
+}
+
+func formatMmapArg(ev Event, idx int) (string, bool) {
+	switch idx {
+	case 0:
+		return formatPtr(ev.Args[idx]), true
+	case 2:
+		return formatMmapProt(ev.Args[idx]), true
+	case 3:
+		return formatMmapFlags(ev.Args[idx]), true
+	default:
+		return "", false
+	}
 }
 
 func formatOpenFlags(raw uint64) string {
@@ -488,7 +546,7 @@ func formatArgDefault(ev Event, idx int) string {
 	case argOff:
 		return fmt.Sprintf("%d", int64(raw))
 	case argPtr:
-		return fmt.Sprintf("0x%x", raw)
+		return formatPtr(raw)
 	case argRaw:
 		return fmt.Sprintf("0x%x", raw)
 	case argNone:

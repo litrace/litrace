@@ -57,6 +57,39 @@ func TestSimpleArgsDecode(t *testing.T) {
 			want: "clock_gettime(0, 0x7ffc1234) = 0",
 		},
 		{
+			name: "mmap with symbolic prot and flags",
+			ev: event{
+				SyscallID: int64(unix.SYS_MMAP),
+				Ret:       0x7fae60eaf000,
+				ArgCount:  6,
+				Args:      [6]uint64{0, 131471, uint64(unix.PROT_READ), uint64(unix.MAP_PRIVATE), 3, 0},
+				ArgTypes:  [6]uint8{argUint, argUint, argUint, argUint, argFD, argOff},
+			},
+			want: "mmap(NULL, 131471, PROT_READ, MAP_PRIVATE, 3, 0) = 0x7fae60eaf000",
+		},
+		{
+			name: "mmap with combined prot and flags preserves unknown bits",
+			ev: event{
+				SyscallID: int64(unix.SYS_MMAP),
+				Ret:       0x7fae60eb0000,
+				ArgCount:  6,
+				Args:      [6]uint64{0x7fae60eb0000, 4096, uint64(unix.PROT_READ | unix.PROT_WRITE), uint64(unix.MAP_PRIVATE | unix.MAP_ANON | 0x80000000), ^uint64(0), 0},
+				ArgTypes:  [6]uint8{argUint, argUint, argUint, argUint, argFD, argOff},
+			},
+			want: "mmap(0x7fae60eb0000, 4096, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS|0x80000000, -1, 0) = 0x7fae60eb0000",
+		},
+		{
+			name: "mmap with prot none and error return",
+			ev: event{
+				SyscallID: int64(unix.SYS_MMAP),
+				Ret:       -int64(unix.EPERM),
+				ArgCount:  6,
+				Args:      [6]uint64{0, 4096, uint64(unix.PROT_NONE), uint64(unix.MAP_SHARED), 4, 0},
+				ArgTypes:  [6]uint8{argUint, argUint, argUint, argUint, argFD, argOff},
+			},
+			want: "mmap(NULL, 4096, PROT_NONE, MAP_SHARED, 4, 0) = -1 EPERM (operation not permitted)",
+		},
+		{
 			name: "eventfd with unsigned arg",
 			ev: event{
 				SyscallID: int64(unix.SYS_EVENTFD),
@@ -493,7 +526,7 @@ func TestSimpleArgsDecode(t *testing.T) {
 					},
 				},
 			},
-			want: "execve(NULL, [<?>], 0x0) = -1 EFAULT (bad address)",
+			want: "execve(NULL, [<?>], NULL) = -1 EFAULT (bad address)",
 		},
 	}
 
