@@ -1,3 +1,7 @@
+/*
+ * SPDX-License-Identifier: GPL-2.0-only
+ */
+
 #ifndef LITRACE_TYPES_H
 #define LITRACE_TYPES_H
 
