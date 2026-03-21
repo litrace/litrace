@@ -5,270 +5,11 @@
 #include <asm/unistd.h>
 #include <bpf/bpf_helpers.h>
 
-enum arg_type {
-	ARG_NONE = 0,
-	ARG_INT = 1,
-	ARG_UINT = 2,
-	ARG_FD = 3,
-	ARG_MODE = 4,
-	ARG_FLAGS = 5,
-	ARG_OFF = 6,
-	ARG_PTR = 7,
-	ARG_RAW = 255,
-};
-
-enum {
-	MAX_VAR_ARGS = 6,
-	MAX_VAR_PAYLOAD = 512,
-	MAX_EXECVE_ARGV = 8,
-	MAX_EXECVE_ARG_STR = 128,
-	MAX_EXECVE_STATE_VARS = 2,
-	MAX_EXECVE_STATE_PAYLOAD = 256,
-};
-
-enum var_arg_kind {
-	VAR_ARG_NONE = 0,
-	VAR_ARG_STRING = 1,
-	VAR_ARG_BYTES = 2,
-	VAR_ARG_ARGV = 3,
-};
-
-enum var_arg_flags {
-	VAR_FLAG_NONE = 0,
-	VAR_FLAG_TRUNCATED = 1 << 0,
-	VAR_FLAG_READ_ERROR = 1 << 1,
-	VAR_FLAG_NULL_POINTER = 1 << 2,
-};
-
-struct var_arg_desc {
-	__u8 arg_index;
-	__u8 flags;
-	__u16 offset;
-	__u16 length;
-	__u16 reserved;
-};
-
-struct event {
-	__u64 ts;
-	__u64 dur;
-	long syscall_id;
-	long ret;
-	__u64 args[6];
-	struct var_arg_desc var_desc[MAX_VAR_ARGS];
-	__u8 payload[MAX_VAR_PAYLOAD];
-	__u32 pid;
-	__u32 tid;
-	__u32 seq;
-	__u16 payload_len;
-	__u8 arg_count;
-	__u8 var_count;
-	__u8 arg_types[6];
-	__u8 var_reserved;
-};
-
-struct execve_snapshot {
-	struct var_arg_desc var_desc[MAX_EXECVE_STATE_VARS];
-	__u8 payload[MAX_EXECVE_STATE_PAYLOAD];
-	__u16 payload_len;
-	__u8 var_count;
-	__u8 reserved;
-};
-
-struct syscall_data {
-	__u64 ts;
-	long syscall_id;
-	unsigned long args[6];
-	__u32 seq;
-	__u8 selected;
-	__u8 reserved[3];
-};
-
-struct syscall_arg_schema {
-	long syscall_id;
-	__u8 arg_count;
-	__u8 arg_types[6];
-};
-
-static const struct syscall_arg_schema scalar_syscall_schemas[] = {
-	{
-	 .syscall_id = __NR_read,
-	 .arg_count = 3,
-	 .arg_types = {ARG_FD, VAR_ARG_BYTES, ARG_UINT, ARG_NONE, ARG_NONE,
-		       ARG_NONE},
-	 },
-	{
-	 .syscall_id = __NR_write,
-	 .arg_count = 3,
-	 .arg_types = {ARG_FD, VAR_ARG_BYTES, ARG_UINT, ARG_NONE, ARG_NONE,
-		       ARG_NONE},
-	 },
-	{
-	 .syscall_id = __NR_open,
-	 .arg_count = 3,
-	 .arg_types = {VAR_ARG_STRING, ARG_FLAGS, ARG_MODE, ARG_NONE, ARG_NONE,
-		       ARG_NONE},
-	 },
-	{
-	 .syscall_id = __NR_close,
-	 .arg_count = 1,
-	 .arg_types = {ARG_FD, ARG_NONE, ARG_NONE, ARG_NONE, ARG_NONE,
-		       ARG_NONE},
-	 },
-	{
-	 .syscall_id = __NR_lseek,
-	 .arg_count = 3,
-	 .arg_types = {ARG_FD, ARG_OFF, ARG_INT, ARG_NONE, ARG_NONE,
-		       ARG_NONE},
-	 },
-	{
-	 .syscall_id = __NR_rt_sigreturn,
-	 .arg_count = 0,
-	 .arg_types = {ARG_NONE, ARG_NONE, ARG_NONE, ARG_NONE, ARG_NONE,
-		       ARG_NONE},
-	 },
-	{
-	 .syscall_id = __NR_sched_yield,
-	 .arg_count = 0,
-	 .arg_types = {ARG_NONE, ARG_NONE, ARG_NONE, ARG_NONE, ARG_NONE,
-		       ARG_NONE},
-	 },
-	{
-	 .syscall_id = __NR_pause,
-	 .arg_count = 0,
-	 .arg_types = {ARG_NONE, ARG_NONE, ARG_NONE, ARG_NONE, ARG_NONE,
-		       ARG_NONE},
-	 },
-	{
-	 .syscall_id = __NR_getpid,
-	 .arg_count = 0,
-	 .arg_types = {ARG_NONE, ARG_NONE, ARG_NONE, ARG_NONE, ARG_NONE,
-		       ARG_NONE},
-	 },
-	{
-	 .syscall_id = __NR_fork,
-	 .arg_count = 0,
-	 .arg_types = {ARG_NONE, ARG_NONE, ARG_NONE, ARG_NONE, ARG_NONE,
-		       ARG_NONE},
-	 },
-	{
-	 .syscall_id = __NR_vfork,
-	 .arg_count = 0,
-	 .arg_types = {ARG_NONE, ARG_NONE, ARG_NONE, ARG_NONE, ARG_NONE,
-		       ARG_NONE},
-	 },
-	{
-	 .syscall_id = __NR_execve,
-	 .arg_count = 3,
-	 .arg_types =
-	 {VAR_ARG_STRING, VAR_ARG_ARGV, ARG_PTR, ARG_NONE, ARG_NONE,
-	  ARG_NONE},
-	 },
-	{
-	 .syscall_id = __NR_fchmod,
-	 .arg_count = 2,
-	 .arg_types = {ARG_FD, ARG_MODE, ARG_NONE, ARG_NONE, ARG_NONE,
-		       ARG_NONE},
-	 },
-	{
-	 .syscall_id = __NR_umask,
-	 .arg_count = 1,
-	 .arg_types = {ARG_MODE, ARG_NONE, ARG_NONE, ARG_NONE, ARG_NONE,
-		       ARG_NONE},
-	 },
-	{
-	 .syscall_id = __NR_getuid,
-	 .arg_count = 0,
-	 .arg_types = {ARG_NONE, ARG_NONE, ARG_NONE, ARG_NONE, ARG_NONE,
-		       ARG_NONE},
-	 },
-	{
-	 .syscall_id = __NR_getgid,
-	 .arg_count = 0,
-	 .arg_types = {ARG_NONE, ARG_NONE, ARG_NONE, ARG_NONE, ARG_NONE,
-		       ARG_NONE},
-	 },
-	{
-	 .syscall_id = __NR_geteuid,
-	 .arg_count = 0,
-	 .arg_types = {ARG_NONE, ARG_NONE, ARG_NONE, ARG_NONE, ARG_NONE,
-		       ARG_NONE},
-	 },
-	{
-	 .syscall_id = __NR_getegid,
-	 .arg_count = 0,
-	 .arg_types = {ARG_NONE, ARG_NONE, ARG_NONE, ARG_NONE, ARG_NONE,
-		       ARG_NONE},
-	 },
-	{
-	 .syscall_id = __NR_getppid,
-	 .arg_count = 0,
-	 .arg_types = {ARG_NONE, ARG_NONE, ARG_NONE, ARG_NONE, ARG_NONE,
-		       ARG_NONE},
-	 },
-	{
-	 .syscall_id = __NR_getpgrp,
-	 .arg_count = 0,
-	 .arg_types = {ARG_NONE, ARG_NONE, ARG_NONE, ARG_NONE, ARG_NONE,
-		       ARG_NONE},
-	 },
-	{
-	 .syscall_id = __NR_setsid,
-	 .arg_count = 0,
-	 .arg_types = {ARG_NONE, ARG_NONE, ARG_NONE, ARG_NONE, ARG_NONE,
-		       ARG_NONE},
-	 },
-	{
-	 .syscall_id = __NR_munlockall,
-	 .arg_count = 0,
-	 .arg_types = {ARG_NONE, ARG_NONE, ARG_NONE, ARG_NONE, ARG_NONE,
-		       ARG_NONE},
-	 },
-	{
-	 .syscall_id = __NR_vhangup,
-	 .arg_count = 0,
-	 .arg_types = {ARG_NONE, ARG_NONE, ARG_NONE, ARG_NONE, ARG_NONE,
-		       ARG_NONE},
-	 },
-	{
-	 .syscall_id = __NR_sync,
-	 .arg_count = 0,
-	 .arg_types = {ARG_NONE, ARG_NONE, ARG_NONE, ARG_NONE, ARG_NONE,
-		       ARG_NONE},
-	 },
-	{
-	 .syscall_id = __NR_gettid,
-	 .arg_count = 0,
-	 .arg_types = {ARG_NONE, ARG_NONE, ARG_NONE, ARG_NONE, ARG_NONE,
-		       ARG_NONE},
-	 },
-	{
-	 .syscall_id = __NR_restart_syscall,
-	 .arg_count = 0,
-	 .arg_types = {ARG_NONE, ARG_NONE, ARG_NONE, ARG_NONE, ARG_NONE,
-		       ARG_NONE},
-	 },
-	{
-	 .syscall_id = __NR_inotify_init,
-	 .arg_count = 0,
-	 .arg_types = {ARG_NONE, ARG_NONE, ARG_NONE, ARG_NONE, ARG_NONE,
-		       ARG_NONE},
-	 },
-	{
-	 .syscall_id = __NR_openat,
-	 .arg_count = 4,
-	 .arg_types = {ARG_FD, VAR_ARG_STRING, ARG_FLAGS, ARG_MODE, ARG_NONE,
-		       ARG_NONE},
-	 },
-	{
-	 .syscall_id = __NR_uretprobe,
-	 .arg_count = 0,
-	 .arg_types = {ARG_NONE, ARG_NONE, ARG_NONE, ARG_NONE, ARG_NONE,
-		       ARG_NONE},
-	 },
-};
+#include "types.h"
+#include "syscalls/x86_64.h"
 
 #define SYSCALL_SCHEMA_COUNT \
-    (sizeof(scalar_syscall_schemas) / sizeof(scalar_syscall_schemas[0]))
+    (sizeof(syscall_schemas) / sizeof(syscall_schemas[0]))
 
 volatile const __u8 follow_forks = 0;
 volatile const __u8 trace_filter_enabled = 0;
@@ -312,16 +53,6 @@ struct {
 	__type(key, __u32);
 	__type(value, __u32);
 } tid_sequences SEC(".maps");
-
-struct sys_enter_args {
-	__u64 pad;
-	long id;
-	unsigned long args[6];
-};
-
-struct clone3_args {
-	__u64 flags;
-};
 
 static __always_inline __u8 is_process_clone(struct syscall_data *state)
 {
@@ -391,7 +122,7 @@ static __always_inline void set_syscall_arg_schema(long syscall_id,
 #pragma unroll
 	for (j = 0; j < SYSCALL_SCHEMA_COUNT; j++) {
 		const struct syscall_arg_schema *schema =
-		    &scalar_syscall_schemas[j];
+		    &syscall_schemas[j];
 
 		if (schema->syscall_id != syscall_id)
 			continue;
@@ -807,12 +538,6 @@ int trace_sys_enter(struct sys_enter_args *ctx)
 	bpf_map_update_elem(&inflight_syscalls, &tid, &state, BPF_ANY);
 	return 0;
 }
-
-struct sys_exit_args {
-	__u64 pad;
-	long id;
-	long ret;
-};
 
 SEC("tracepoint/raw_syscalls/sys_exit")
 int trace_sys_exit(struct sys_exit_args *ctx)
