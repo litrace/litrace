@@ -486,7 +486,7 @@ static const struct syscall_arg_schema syscall_schemas[] = {
 	{
 	 .syscall_id = __NR_pipe,
 	 .arg_count = 1,
-	 .arg_types = {ARG_PTR, ARG_NONE, ARG_NONE, ARG_NONE, ARG_NONE, ARG_NONE},
+	 .arg_types = {ARG_FD, ARG_NONE, ARG_NONE, ARG_NONE, ARG_NONE, ARG_NONE},
 	 },
 	{
 	 .syscall_id = __NR_select,
@@ -536,7 +536,7 @@ static const struct syscall_arg_schema syscall_schemas[] = {
 	{
 	 .syscall_id = __NR_dup,
 	 .arg_count = 1,
-	 .arg_types = {ARG_UINT, ARG_NONE, ARG_NONE, ARG_NONE, ARG_NONE, ARG_NONE},
+	 .arg_types = {ARG_FD, ARG_NONE, ARG_NONE, ARG_NONE, ARG_NONE, ARG_NONE},
 	 },
 	{
 	 .syscall_id = __NR_dup2,
@@ -1756,7 +1756,7 @@ static const struct syscall_arg_schema syscall_schemas[] = {
 	{
 	 .syscall_id = __NR_pipe2,
 	 .arg_count = 2,
-	 .arg_types = {ARG_PTR, ARG_INT, ARG_NONE, ARG_NONE, ARG_NONE, ARG_NONE},
+	 .arg_types = {ARG_FD, ARG_INT, ARG_NONE, ARG_NONE, ARG_NONE, ARG_NONE},
 	 },
 	{
 	 .syscall_id = __NR_inotify_init1,

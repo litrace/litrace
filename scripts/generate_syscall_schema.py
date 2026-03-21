@@ -116,7 +116,7 @@ def classify_argument(syscall_name: str, arg_index: int, sig: str) -> str:
     if syscall_name in {"open", "openat"} and arg_name == "flags":
         return "ARG_FLAGS"
 
-    if "fd" in arg_name:
+    if "fd" in arg_name or arg_name == "fildes":
         return "ARG_FD"
     if arg_name == "whence":
         return "ARG_INT"

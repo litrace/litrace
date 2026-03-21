@@ -110,9 +110,11 @@ func Run(cfg Config, opts Options) (ws syscall.WaitStatus, err error) {
 		targetTGIDs = traceTargetTGIDs(nil, launchPID)
 	}
 
+	filter := newPathFilter(cfg)
+
 	handle, err := bpf.NewHandle(targetTGIDs, bpf.HandleConfig{
 		FollowForks:     cfg.FollowForks,
-		TraceSyscallIDs: cfg.TraceSyscallIDs,
+		TraceSyscallIDs: handleTraceSyscallIDs(cfg),
 	})
 	if err != nil {
 		return 0, err
@@ -151,7 +153,7 @@ func Run(cfg Config, opts Options) (ws syscall.WaitStatus, err error) {
 			fmt.Fprintf(opts.Stderr, "litrace: decoding event: %v\n", err)
 			continue
 		}
-		if !shouldOutputEvent(cfg, ev) {
+		if !filter.shouldOutput(ev) {
 			continue
 		}
 		if cfg.SummaryOnly {
@@ -308,36 +310,7 @@ func traceTargetTGIDs(attachPIDs []int, launchPID int) []uint32 {
 	return []uint32{uint32(launchPID)}
 }
 
-func shouldOutputEvent(cfg Config, ev Event) bool {
-	if len(cfg.TracePaths) == 0 {
-		return true
-	}
-
-	path, ok := eventTracePath(ev)
-	if !ok {
-		return false
-	}
-
-	for _, candidate := range cfg.TracePaths {
-		if candidate == path {
-			return true
-		}
-	}
-	return false
-}
-
-func eventTracePath(ev Event) (string, bool) {
-	var argIndex int
-
-	switch ev.SyscallID {
-	case int64(unix.SYS_OPEN):
-		argIndex = 0
-	case int64(unix.SYS_OPENAT):
-		argIndex = 1
-	default:
-		return "", false
-	}
-
+func eventTracePathAt(ev Event, argIndex int) (string, bool) {
 	desc, ok := findVarArgDesc(ev, argIndex)
 	if !ok {
 		return "", false
