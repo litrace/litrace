@@ -54,3 +54,20 @@ func TestTracePathOpenatDirFDRelative(t *testing.T) {
 
 	assertExactOutput(t, traceOutput, fixtureOutput)
 }
+
+func TestTracePathRelativeAfterChdir(t *testing.T) {
+	requireRoot(t)
+
+	root := repoRoot(t)
+	fixturePath := buildFixtureSource(t, root, "path_filter_chdir")
+
+	traceOutput, fixtureOutput := runLitraceArgs(
+		t,
+		root,
+		fixturePath,
+		"-e", "trace=open,chdir",
+		"-P", "/tmp/litrace_path_filter_chdir/target.tmp",
+	)
+
+	assertExactOutput(t, traceOutput, fixtureOutput)
+}

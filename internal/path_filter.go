@@ -44,7 +44,7 @@ func handleTraceSyscallIDs(cfg Config) map[int64]struct{} {
 		return cfg.TraceSyscallIDs
 	}
 
-	ids := make(map[int64]struct{}, len(cfg.TraceSyscallIDs)+7)
+	ids := make(map[int64]struct{}, len(cfg.TraceSyscallIDs)+14)
 	for id := range cfg.TraceSyscallIDs {
 		ids[id] = struct{}{}
 	}
@@ -57,6 +57,13 @@ func handleTraceSyscallIDs(cfg Config) map[int64]struct{} {
 		int64(unix.SYS_DUP2),
 		int64(unix.SYS_DUP3),
 		int64(unix.SYS_FCNTL),
+		int64(unix.SYS_CHDIR),
+		int64(unix.SYS_FCHDIR),
+		int64(unix.SYS_RENAME),
+		int64(unix.SYS_RENAMEAT),
+		int64(unix.SYS_RENAMEAT2),
+		int64(unix.SYS_UNLINK),
+		int64(unix.SYS_UNLINKAT),
 	} {
 		ids[id] = struct{}{}
 	}
@@ -108,6 +115,18 @@ func (f *pathFilter) observe(ev Event) {
 		f.observeFcntl(ev)
 	case int64(unix.SYS_CLOSE):
 		f.observeClose(ev)
+	case int64(unix.SYS_CHDIR):
+		f.observeChdir(ev)
+	case int64(unix.SYS_FCHDIR):
+		f.observeFchdir(ev)
+	case int64(unix.SYS_RENAME):
+		f.observeRename(ev, 0, 1)
+	case int64(unix.SYS_RENAMEAT), int64(unix.SYS_RENAMEAT2):
+		f.observeRename(ev, 1, 3)
+	case int64(unix.SYS_UNLINK):
+		f.observeUnlink(ev, 0)
+	case int64(unix.SYS_UNLINKAT):
+		f.observeUnlink(ev, 1)
 	}
 }
 
@@ -122,10 +141,7 @@ func (f *pathFilter) observeOpen(ev Event, pathArgIndex int) {
 	}
 
 	f.setFDPath(ev.Pid, uint64(ev.Ret), path)
-	if _, matched := f.paths[path]; !matched {
-		return
-	}
-	f.trackFD(ev.Pid, uint64(ev.Ret))
+	f.syncTrackedFD(ev.Pid, uint64(ev.Ret), path)
 }
 
 func (f *pathFilter) observeDupRet(ev Event, srcIndex int) {
@@ -135,6 +151,7 @@ func (f *pathFilter) observeDupRet(ev Event, srcIndex int) {
 	srcFD := normalizeTrackedFD(ev.Args[srcIndex])
 	if path, ok := f.fdPath(ev.Pid, srcFD); ok {
 		f.setFDPath(ev.Pid, uint64(ev.Ret), path)
+		f.syncTrackedFD(ev.Pid, uint64(ev.Ret), path)
 	}
 	if !f.argTracked(ev, srcIndex) {
 		return
@@ -151,8 +168,10 @@ func (f *pathFilter) observeDupPair(ev Event) {
 	newfd := normalizeTrackedFD(ev.Args[1])
 	if path, ok := f.fdPath(ev.Pid, oldfd); ok {
 		f.setFDPath(ev.Pid, newfd, path)
+		f.syncTrackedFD(ev.Pid, newfd, path)
 	} else {
 		f.unsetFDPath(ev.Pid, newfd)
+		f.untrackFD(ev.Pid, newfd)
 	}
 	if f.fdTracked(ev.Pid, oldfd) {
 		f.trackFD(ev.Pid, newfd)
@@ -173,6 +192,7 @@ func (f *pathFilter) observeFcntl(ev Event) {
 
 	if path, ok := f.fdPath(ev.Pid, normalizeTrackedFD(ev.Args[0])); ok {
 		f.setFDPath(ev.Pid, uint64(ev.Ret), path)
+		f.syncTrackedFD(ev.Pid, uint64(ev.Ret), path)
 	}
 	f.trackFD(ev.Pid, uint64(ev.Ret))
 }
@@ -184,6 +204,58 @@ func (f *pathFilter) observeClose(ev Event) {
 	fd := normalizeTrackedFD(ev.Args[0])
 	f.untrackFD(ev.Pid, fd)
 	f.unsetFDPath(ev.Pid, fd)
+}
+
+func (f *pathFilter) observeChdir(ev Event) {
+	if ev.Ret < 0 {
+		return
+	}
+	path, ok := f.resolvePathAt(ev, 0)
+	if !ok {
+		return
+	}
+	f.cwdByPID[ev.Pid] = path
+}
+
+func (f *pathFilter) observeFchdir(ev Event) {
+	if ev.Ret < 0 || ev.ArgCount < 1 {
+		return
+	}
+	path, ok := f.fdPath(ev.Pid, normalizeTrackedFD(ev.Args[0]))
+	if !ok {
+		return
+	}
+	f.cwdByPID[ev.Pid] = path
+}
+
+func (f *pathFilter) observeRename(ev Event, oldIndex, newIndex int) {
+	if ev.Ret < 0 {
+		return
+	}
+
+	oldPath, ok := f.resolvePathAt(ev, oldIndex)
+	if !ok {
+		return
+	}
+	newPath, ok := f.resolvePathAt(ev, newIndex)
+	if !ok {
+		return
+	}
+
+	f.rewritePIDPaths(ev.Pid, oldPath, newPath)
+}
+
+func (f *pathFilter) observeUnlink(ev Event, pathIndex int) {
+	if ev.Ret < 0 {
+		return
+	}
+
+	path, ok := f.resolvePathAt(ev, pathIndex)
+	if !ok {
+		return
+	}
+
+	f.dropPIDPaths(ev.Pid, path)
 }
 
 func (f *pathFilter) hasTrackedFDArg(ev Event) bool {
@@ -214,6 +286,14 @@ func (f *pathFilter) matchesPath(ev Event) bool {
 		return f.matchesPathAt(ev, 0)
 	case int64(unix.SYS_OPENAT):
 		return f.matchesPathAt(ev, 1)
+	case int64(unix.SYS_CHDIR), int64(unix.SYS_UNLINK):
+		return f.matchesPathAt(ev, 0)
+	case int64(unix.SYS_RENAME):
+		return f.matchesPathAt(ev, 0) || f.matchesPathAt(ev, 1)
+	case int64(unix.SYS_UNLINKAT):
+		return f.matchesPathAt(ev, 1)
+	case int64(unix.SYS_RENAMEAT), int64(unix.SYS_RENAMEAT2):
+		return f.matchesPathAt(ev, 1) || f.matchesPathAt(ev, 3)
 	default:
 		return false
 	}
@@ -252,19 +332,23 @@ func (f *pathFilter) resolvePath(ev Event, argIndex int, path string) (string, b
 }
 
 func (f *pathFilter) resolvePathBase(ev Event, argIndex int) (string, bool) {
-	if ev.SyscallID != int64(unix.SYS_OPENAT) || argIndex != 1 {
+	dirfdArgIndex, ok := pathBaseFDArgIndex(ev.SyscallID, argIndex)
+	if !ok {
 		return f.cwdForPID(ev.Pid)
 	}
-	if ev.ArgCount < 1 {
+	if dirfdArgIndex < 0 {
+		return f.cwdForPID(ev.Pid)
+	}
+	if dirfdArgIndex >= int(ev.ArgCount) {
 		return "", false
 	}
 
-	dirfd := int64(int32(ev.Args[0]))
+	dirfd := int64(int32(ev.Args[dirfdArgIndex]))
 	if dirfd == unix.AT_FDCWD {
 		return f.cwdForPID(ev.Pid)
 	}
 
-	path, ok := f.fdPath(ev.Pid, normalizeTrackedFD(ev.Args[0]))
+	path, ok := f.fdPath(ev.Pid, normalizeTrackedFD(ev.Args[dirfdArgIndex]))
 	if !ok {
 		return "", false
 	}
@@ -307,6 +391,14 @@ func (f *pathFilter) setFDPath(pid uint32, fd uint64, path string) {
 	f.fdPaths[pid] = map[uint64]string{fd: path}
 }
 
+func (f *pathFilter) syncTrackedFD(pid uint32, fd uint64, path string) {
+	if _, matched := f.paths[path]; matched {
+		f.trackFD(pid, fd)
+		return
+	}
+	f.untrackFD(pid, fd)
+}
+
 func (f *pathFilter) unsetFDPath(pid uint32, fd uint64) {
 	pathMap := f.fdPaths[pid]
 	if pathMap == nil {
@@ -339,6 +431,79 @@ func (f *pathFilter) cwdForPID(pid uint32) (string, bool) {
 	cwd = filepath.Clean(cwd)
 	f.cwdByPID[pid] = cwd
 	return cwd, true
+}
+
+func (f *pathFilter) rewritePIDPaths(pid uint32, oldPath, newPath string) {
+	if cwd, ok := f.cwdByPID[pid]; ok {
+		if rewritten, changed := rewritePathPrefix(cwd, oldPath, newPath); changed {
+			f.cwdByPID[pid] = rewritten
+		}
+	}
+
+	pathMap := f.fdPaths[pid]
+	if pathMap == nil {
+		return
+	}
+	for fd, path := range pathMap {
+		rewritten, changed := rewritePathPrefix(path, oldPath, newPath)
+		if !changed {
+			continue
+		}
+		pathMap[fd] = rewritten
+		f.syncTrackedFD(pid, fd, rewritten)
+	}
+}
+
+func (f *pathFilter) dropPIDPaths(pid uint32, target string) {
+	pathMap := f.fdPaths[pid]
+	if pathMap == nil {
+		return
+	}
+	for fd, path := range pathMap {
+		if path != target {
+			continue
+		}
+		f.untrackFD(pid, fd)
+		delete(pathMap, fd)
+	}
+	if len(pathMap) == 0 {
+		delete(f.fdPaths, pid)
+	}
+}
+
+func rewritePathPrefix(path, oldBase, newBase string) (string, bool) {
+	path = filepath.Clean(path)
+	oldBase = filepath.Clean(oldBase)
+	newBase = filepath.Clean(newBase)
+
+	if path == oldBase {
+		return newBase, true
+	}
+
+	prefix := oldBase + string(os.PathSeparator)
+	if len(path) <= len(prefix) || path[:len(prefix)] != prefix {
+		return path, false
+	}
+	return filepath.Join(newBase, path[len(prefix):]), true
+}
+
+func pathBaseFDArgIndex(syscallID int64, argIndex int) (int, bool) {
+	switch syscallID {
+	case int64(unix.SYS_OPENAT), int64(unix.SYS_UNLINKAT):
+		if argIndex == 1 {
+			return 0, true
+		}
+	case int64(unix.SYS_RENAMEAT), int64(unix.SYS_RENAMEAT2):
+		switch argIndex {
+		case 1:
+			return 0, true
+		case 3:
+			return 2, true
+		}
+	case int64(unix.SYS_OPEN), int64(unix.SYS_CHDIR), int64(unix.SYS_UNLINK), int64(unix.SYS_RENAME):
+		return -1, true
+	}
+	return -1, false
 }
 
 func normalizeTrackedFD(raw uint64) uint64 {

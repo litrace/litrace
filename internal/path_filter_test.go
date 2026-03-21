@@ -26,6 +26,13 @@ func TestHandleTraceSyscallIDsPathFilterSupport(t *testing.T) {
 		int64(unix.SYS_DUP2),
 		int64(unix.SYS_DUP3),
 		int64(unix.SYS_FCNTL),
+		int64(unix.SYS_CHDIR),
+		int64(unix.SYS_FCHDIR),
+		int64(unix.SYS_RENAME),
+		int64(unix.SYS_RENAMEAT),
+		int64(unix.SYS_RENAMEAT2),
+		int64(unix.SYS_UNLINK),
+		int64(unix.SYS_UNLINKAT),
 	} {
 		if _, ok := got[want]; !ok {
 			t.Fatalf("handleTraceSyscallIDs missing %d", want)
@@ -271,6 +278,109 @@ func TestPathFilterResolvesOpenatRelativeToTrackedDirFD(t *testing.T) {
 	}
 }
 
+func TestPathFilterUpdatesCWDOnChdir(t *testing.T) {
+	t.Parallel()
+
+	target := filepath.Clean("/tmp/litrace-chdir/target.txt")
+	filter := newPathFilter(Config{TracePaths: []string{target}})
+	filter.cwdByPID[100] = "/tmp"
+
+	chdirEv := pathFilterSinglePathEvent(int64(unix.SYS_CHDIR), filepath.Dir(target), 0)
+	if filter.shouldOutput(chdirEv) {
+		t.Fatal("chdir to parent directory should not match target file path")
+	}
+
+	openEv := pathFilterOpenEvent(int64(unix.SYS_OPEN), filepath.Base(target), 5)
+	if !filter.shouldOutput(openEv) {
+		t.Fatal("relative open after chdir should match target path")
+	}
+}
+
+func TestPathFilterUpdatesCWDOnFchdir(t *testing.T) {
+	t.Parallel()
+
+	target := filepath.Clean("/tmp/litrace-fchdir/target.txt")
+	filter := newPathFilter(Config{TracePaths: []string{target}})
+	filter.setFDPath(100, 9, filepath.Dir(target))
+
+	fchdirEv := Event{
+		Pid:       100,
+		SyscallID: int64(unix.SYS_FCHDIR),
+		Ret:       0,
+		ArgCount:  1,
+		Args:      [6]uint64{9},
+		ArgTypes:  [6]uint8{argFD},
+	}
+	if filter.shouldOutput(fchdirEv) {
+		t.Fatal("fchdir to parent directory should not match target file path")
+	}
+
+	openEv := pathFilterOpenEvent(int64(unix.SYS_OPEN), filepath.Base(target), 5)
+	if !filter.shouldOutput(openEv) {
+		t.Fatal("relative open after fchdir should match target path")
+	}
+}
+
+func TestPathFilterRenameMovesTrackedFDState(t *testing.T) {
+	t.Parallel()
+
+	oldPath := filepath.Clean("/tmp/litrace-rename/old.txt")
+	newPath := filepath.Clean("/tmp/litrace-rename/new.txt")
+	filter := newPathFilter(Config{TracePaths: []string{newPath}})
+	filter.cwdByPID[100] = filepath.Dir(oldPath)
+
+	openEv := pathFilterOpenEvent(int64(unix.SYS_OPEN), filepath.Base(oldPath), 5)
+	if filter.shouldOutput(openEv) {
+		t.Fatal("open on pre-rename source path should not match target path")
+	}
+
+	renameEv := pathFilterRenameEvent(int64(unix.SYS_RENAME), filepath.Base(oldPath), filepath.Base(newPath), 0)
+	if !filter.shouldOutput(renameEv) {
+		t.Fatal("rename into target path should be printed")
+	}
+
+	readEv := Event{
+		Pid:       100,
+		SyscallID: int64(unix.SYS_READ),
+		Ret:       1,
+		ArgCount:  3,
+		Args:      [6]uint64{5, 0, 1},
+		ArgTypes:  [6]uint8{argFD, argPtr, argUint},
+	}
+	if !filter.shouldOutput(readEv) {
+		t.Fatal("fd opened before rename into target path should become tracked")
+	}
+}
+
+func TestPathFilterUnlinkClearsTrackedFDState(t *testing.T) {
+	t.Parallel()
+
+	target := filepath.Clean("/tmp/litrace-unlink/target.txt")
+	filter := newPathFilter(Config{TracePaths: []string{target}})
+
+	openEv := pathFilterOpenEvent(int64(unix.SYS_OPEN), target, 5)
+	if !filter.shouldOutput(openEv) {
+		t.Fatal("matched open should be printed")
+	}
+
+	unlinkEv := pathFilterSinglePathEvent(int64(unix.SYS_UNLINK), target, 0)
+	if !filter.shouldOutput(unlinkEv) {
+		t.Fatal("unlink of target path should be printed")
+	}
+
+	readEv := Event{
+		Pid:       100,
+		SyscallID: int64(unix.SYS_READ),
+		Ret:       1,
+		ArgCount:  3,
+		Args:      [6]uint64{5, 0, 1},
+		ArgTypes:  [6]uint8{argFD, argPtr, argUint},
+	}
+	if filter.shouldOutput(readEv) {
+		t.Fatal("unlink should clear tracked fd state for the removed path")
+	}
+}
+
 func pathFilterOpenEvent(syscallID int64, path string, ret int64) Event {
 	ev := Event{
 		Pid:        100,
@@ -300,5 +410,47 @@ func pathFilterOpenEvent(syscallID int64, path string, ret int64) Event {
 func pathFilterOpenAtEvent(dirfd uint64, path string, ret int64) Event {
 	ev := pathFilterOpenEvent(int64(unix.SYS_OPENAT), path, ret)
 	ev.Args[0] = dirfd
+	return ev
+}
+
+func pathFilterSinglePathEvent(syscallID int64, path string, ret int64) Event {
+	ev := Event{
+		Pid:        100,
+		SyscallID:  syscallID,
+		Ret:        ret,
+		ArgCount:   1,
+		ArgTypes:   [6]uint8{varArgString},
+		VarCount:   1,
+		PayloadLen: uint16(len(path)),
+	}
+	ev.VarDesc[0] = VarArgDesc{
+		ArgIndex: 0,
+		Length:   uint16(len(path)),
+	}
+	copy(ev.Payload[:], []byte(path))
+	return ev
+}
+
+func pathFilterRenameEvent(syscallID int64, oldPath, newPath string, ret int64) Event {
+	ev := Event{
+		Pid:       100,
+		SyscallID: syscallID,
+		Ret:       ret,
+		ArgCount:  2,
+		ArgTypes:  [6]uint8{varArgString, varArgString},
+		VarCount:  2,
+	}
+	ev.VarDesc[0] = VarArgDesc{
+		ArgIndex: 0,
+		Length:   uint16(len(oldPath)),
+	}
+	ev.VarDesc[1] = VarArgDesc{
+		ArgIndex: 1,
+		Offset:   uint16(len(oldPath)),
+		Length:   uint16(len(newPath)),
+	}
+	ev.PayloadLen = uint16(len(oldPath) + len(newPath))
+	copy(ev.Payload[:], []byte(oldPath))
+	copy(ev.Payload[len(oldPath):], []byte(newPath))
 	return ev
 }

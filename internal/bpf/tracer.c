@@ -605,6 +605,30 @@ int trace_sys_exit(struct sys_exit_args *ctx)
 		e->arg_types[1] = VAR_ARG_STRING;
 	}
 
+	if (state->syscall_id == __NR_chdir || state->syscall_id == __NR_unlink) {
+		append_var_string(e, 0, (const char *)state->args[0]);
+		e->arg_types[0] = VAR_ARG_STRING;
+	}
+
+	if (state->syscall_id == __NR_rename) {
+		append_var_string(e, 0, (const char *)state->args[0]);
+		e->arg_types[0] = VAR_ARG_STRING;
+		append_var_string(e, 1, (const char *)state->args[1]);
+		e->arg_types[1] = VAR_ARG_STRING;
+	}
+
+	if (state->syscall_id == __NR_unlinkat) {
+		append_var_string(e, 1, (const char *)state->args[1]);
+		e->arg_types[1] = VAR_ARG_STRING;
+	}
+
+	if (state->syscall_id == __NR_renameat || state->syscall_id == __NR_renameat2) {
+		append_var_string(e, 1, (const char *)state->args[1]);
+		e->arg_types[1] = VAR_ARG_STRING;
+		append_var_string(e, 3, (const char *)state->args[3]);
+		e->arg_types[3] = VAR_ARG_STRING;
+	}
+
 	if (state->syscall_id == __NR_execve) {
 		struct execve_snapshot *snapshot =
 		    bpf_map_lookup_elem(&execve_snapshots, &tid);

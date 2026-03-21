@@ -41,6 +41,7 @@ main(void)
 	(void) unlink(other);
 	(void) unlink(match_seed);
 	(void) unlink(other_seed);
+	printf("unlink(\"%s\") = -1 ENOENT (no such file or directory)\n", match);
 
 	fd = open(match_seed, O_CREAT | O_RDONLY, 0600);
 	if (fd == -1)
@@ -90,6 +91,7 @@ main(void)
 
 	if (unlink(match))
 		fail("unlink match");
+	printf("unlink(\"%s\") = 0\n", match);
 	if (unlink(other))
 		fail("unlink other");
 
