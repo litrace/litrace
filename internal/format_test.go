@@ -246,6 +246,24 @@ func TestSimpleArgsDecode(t *testing.T) {
 			want: "read(4, \"abc\", 10) = 3",
 		},
 		{
+			name: "read with zero-length payload renders empty string",
+			ev: event{
+				SyscallID: int64(unix.SYS_READ),
+				Ret:       0,
+				ArgCount:  3,
+				Args:      [6]uint64{4, 0, 10},
+				ArgTypes:  [6]uint8{argFD, varArgBytes, argUint},
+				VarCount:  1,
+				VarDesc: [6]varArgDesc{{
+					ArgIndex: 1,
+					Offset:   0,
+					Length:   0,
+				}},
+				PayloadLen: 0,
+			},
+			want: "read(4, \"\", 10) = 0",
+		},
+		{
 			name: "execve with filename and argv summary",
 			ev: event{
 				SyscallID: int64(unix.SYS_EXECVE),

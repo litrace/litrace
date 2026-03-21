@@ -120,8 +120,8 @@ func (f *pathFilter) observeDupPair(ev Event) {
 		return
 	}
 
-	oldfd := ev.Args[0]
-	newfd := ev.Args[1]
+	oldfd := normalizeTrackedFD(ev.Args[0])
+	newfd := normalizeTrackedFD(ev.Args[1])
 	if f.fdTracked(ev.Pid, oldfd) {
 		f.trackFD(ev.Pid, newfd)
 		return
@@ -146,7 +146,7 @@ func (f *pathFilter) observeClose(ev Event) {
 	if ev.Ret < 0 || ev.ArgCount < 1 {
 		return
 	}
-	f.untrackFD(ev.Pid, ev.Args[0])
+	f.untrackFD(ev.Pid, normalizeTrackedFD(ev.Args[0]))
 }
 
 func (f *pathFilter) hasTrackedFDArg(ev Event) bool {
@@ -154,7 +154,7 @@ func (f *pathFilter) hasTrackedFDArg(ev Event) bool {
 		if ev.ArgTypes[i] != argFD {
 			continue
 		}
-		if f.fdTracked(ev.Pid, ev.Args[i]) {
+		if f.fdTracked(ev.Pid, normalizeTrackedFD(ev.Args[i])) {
 			return true
 		}
 	}
@@ -168,7 +168,7 @@ func (f *pathFilter) argTracked(ev Event, idx int) bool {
 	if ev.ArgTypes[idx] != argFD {
 		return false
 	}
-	return f.fdTracked(ev.Pid, ev.Args[idx])
+	return f.fdTracked(ev.Pid, normalizeTrackedFD(ev.Args[idx]))
 }
 
 func (f *pathFilter) matchesPath(ev Event) bool {
@@ -217,4 +217,8 @@ func (f *pathFilter) fdTracked(pid uint32, fd uint64) bool {
 	}
 	_, ok := fdSet[fd]
 	return ok
+}
+
+func normalizeTrackedFD(raw uint64) uint64 {
+	return uint64(uint32(raw))
 }

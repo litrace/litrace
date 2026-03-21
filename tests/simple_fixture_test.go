@@ -5,14 +5,15 @@ import (
 	"testing"
 )
 
-func runSimpleFixtureMatch(t *testing.T, fixtureName, filter string) {
+func runSimpleFixtureMatch(t *testing.T, fixtureName, filter string, args ...string) {
 	t.Helper()
 
 	requireRoot(t)
 
 	root := repoRoot(t)
 	fixturePath := filepath.Join(root, "tests", "fixtures", "bin", fixtureName)
-	traceOutput, fixtureOutput := runLitrace(t, root, filter, fixturePath)
+	litraceArgs := append([]string{"-e", filter}, args...)
+	traceOutput, fixtureOutput := runLitraceArgs(t, root, fixturePath, litraceArgs...)
 
 	assertExactOutput(t, traceOutput, fixtureOutput)
 }

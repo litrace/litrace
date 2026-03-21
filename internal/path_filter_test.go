@@ -181,6 +181,40 @@ func TestPathFilterDup2ReplacesTrackedFD(t *testing.T) {
 	}
 }
 
+func TestPathFilterMatchesTaggedFDArgs(t *testing.T) {
+	t.Parallel()
+
+	filter := newPathFilter(Config{TracePaths: []string{"/tmp/target"}})
+
+	if !filter.shouldOutput(pathFilterOpenEvent(int64(unix.SYS_OPEN), "/tmp/target", 1)) {
+		t.Fatal("matched open should be printed")
+	}
+
+	readEv := Event{
+		Pid:       100,
+		SyscallID: int64(unix.SYS_READ),
+		Ret:       0,
+		ArgCount:  3,
+		Args:      [6]uint64{0xfacefeed00000000 | 1, 0, 0},
+		ArgTypes:  [6]uint8{argFD, argPtr, argUint},
+	}
+	if !filter.shouldOutput(readEv) {
+		t.Fatal("tagged read fd should match tracked fd")
+	}
+
+	writeEv := Event{
+		Pid:       100,
+		SyscallID: int64(unix.SYS_WRITE),
+		Ret:       1,
+		ArgCount:  3,
+		Args:      [6]uint64{0xfacefeed00000000 | 1, 0, 1},
+		ArgTypes:  [6]uint8{argFD, argPtr, argUint},
+	}
+	if !filter.shouldOutput(writeEv) {
+		t.Fatal("tagged write fd should match tracked fd")
+	}
+}
+
 func pathFilterOpenEvent(syscallID int64, path string, ret int64) Event {
 	ev := Event{
 		Pid:        100,

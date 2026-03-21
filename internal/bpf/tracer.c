@@ -635,7 +635,7 @@ int trace_sys_exit(struct sys_exit_args *ctx)
 				 (__u64) state->args[2]);
 	}
 
-	if (state->syscall_id == __NR_read && ctx->ret > 0) {
+	if (state->syscall_id == __NR_read && ctx->ret >= 0) {
 		append_var_bytes(e, 1, (const void *)state->args[1],
 				 (__u64) ctx->ret);
 	}
