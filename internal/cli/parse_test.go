@@ -24,6 +24,7 @@ func TestParseArgs(t *testing.T) {
 		name         string
 		args         []string
 		wantAttach   []int
+		wantPaths    []string
 		wantFollow   bool
 		wantTraceOut string
 		wantProgName string
@@ -34,7 +35,7 @@ func TestParseArgs(t *testing.T) {
 		{
 			name:    "requires program",
 			args:    []string{},
-			wantErr: "usage: litrace [-f] [-o FILE] [-p PID[,PID...]] <program> [args...]",
+			wantErr: "usage: litrace [-f] [-o FILE] [-p PID[,PID...]] [-P PATH] <program> [args...]",
 		},
 		{
 			name:    "rejects unknown option",
@@ -74,6 +75,14 @@ func TestParseArgs(t *testing.T) {
 			args:    []string{"-p", "123", "/bin/echo"},
 			wantErr: "cannot use -p with a program",
 		},
+		{
+			name:         "supports trace path before program",
+			args:         []string{"-P", "/tmp/target", "/bin/echo", "hi"},
+			wantPaths:    []string{"/tmp/target"},
+			wantProgName: "/bin/echo",
+			wantProgPath: "/bin/echo",
+			wantProgArgs: []string{"hi"},
+		},
 	}
 
 	for _, tt := range tests {
@@ -110,6 +119,14 @@ func TestParseArgs(t *testing.T) {
 			for i := range cfg.AttachPIDs {
 				if cfg.AttachPIDs[i] != tt.wantAttach[i] {
 					t.Fatalf("ParseArgs() AttachPIDs[%d] mismatch: got %d want %d", i, cfg.AttachPIDs[i], tt.wantAttach[i])
+				}
+			}
+			if len(cfg.TracePaths) != len(tt.wantPaths) {
+				t.Fatalf("ParseArgs() TracePaths length mismatch: got %d want %d", len(cfg.TracePaths), len(tt.wantPaths))
+			}
+			for i := range cfg.TracePaths {
+				if cfg.TracePaths[i] != tt.wantPaths[i] {
+					t.Fatalf("ParseArgs() TracePaths[%d] mismatch: got %q want %q", i, cfg.TracePaths[i], tt.wantPaths[i])
 				}
 			}
 			if cfg.ProgramName != tt.wantProgName {
@@ -209,6 +226,66 @@ func TestParseArgsAttachFilter(t *testing.T) {
 			if cfg.ProgramName != "" || cfg.ProgramPath != "" || len(cfg.ProgramArgs) != 0 {
 				t.Fatalf("ParseArgs() expected empty program fields in attach mode, got ProgramName=%q ProgramPath=%q ProgramArgs=%v", cfg.ProgramName, cfg.ProgramPath, cfg.ProgramArgs)
 			}
+		})
+	}
+}
+
+func TestParseArgsTracePath(t *testing.T) {
+	tests := []struct {
+		name      string
+		args      []string
+		wantPaths []string
+		wantErr   string
+		wantTrace []int64
+	}{
+		{
+			name:      "single path selector",
+			args:      []string{"-P", "/tmp/one", "/bin/echo"},
+			wantPaths: []string{"/tmp/one"},
+		},
+		{
+			name:      "repeated path selectors preserve order",
+			args:      []string{"-P", "/tmp/one", "-P", "relative/path", "-P", "/tmp/one", "/bin/echo"},
+			wantPaths: []string{"/tmp/one", "relative/path", "/tmp/one"},
+		},
+		{
+			name:      "path selector combines with trace selector",
+			args:      []string{"-P", "/tmp/one", "-e", "trace=openat", "/bin/echo"},
+			wantPaths: []string{"/tmp/one"},
+			wantTrace: []int64{257},
+		},
+		{
+			name:    "empty path rejected",
+			args:    []string{"-P", "", "/bin/echo"},
+			wantErr: "invalid -P path \"\": empty path",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg, err := ParseArgs("litrace", tt.args)
+			if tt.wantErr != "" {
+				if err == nil {
+					t.Fatalf("ParseArgs() expected error containing %q, got nil", tt.wantErr)
+				}
+				if !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("ParseArgs() error mismatch: got %q want substring %q", err, tt.wantErr)
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("ParseArgs() unexpected error: %v", err)
+			}
+			if len(cfg.TracePaths) != len(tt.wantPaths) {
+				t.Fatalf("ParseArgs() TracePaths length mismatch: got %d want %d", len(cfg.TracePaths), len(tt.wantPaths))
+			}
+			for i := range cfg.TracePaths {
+				if cfg.TracePaths[i] != tt.wantPaths[i] {
+					t.Fatalf("ParseArgs() TracePaths[%d] mismatch: got %q want %q", i, cfg.TracePaths[i], tt.wantPaths[i])
+				}
+			}
+			requireTraceIDs(t, cfg.TraceSyscallIDs, tt.wantTrace...)
 		})
 	}
 }

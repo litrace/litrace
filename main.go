@@ -56,6 +56,7 @@ func main() {
 		AttachPIDs:      cfg.AttachPIDs,
 		FollowForks:     cfg.FollowForks,
 		TraceSyscallIDs: cfg.TraceSyscallIDs,
+		TracePaths:      cfg.TracePaths,
 	}, trace.Options{
 		Stdin:       os.Stdin,
 		Stdout:      os.Stdout,

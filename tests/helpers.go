@@ -44,6 +44,12 @@ func mustExist(t *testing.T, paths ...string) {
 func runLitrace(t *testing.T, root, filter, fixturePath string) ([]byte, []byte) {
 	t.Helper()
 
+	return runLitraceArgs(t, root, fixturePath, "-e", filter)
+}
+
+func runLitraceArgs(t *testing.T, root, fixturePath string, args ...string) ([]byte, []byte) {
+	t.Helper()
+
 	litracePath := filepath.Join(root, "litrace")
 	mustExist(t, litracePath, fixturePath)
 
@@ -55,7 +61,8 @@ func runLitrace(t *testing.T, root, filter, fixturePath string) ([]byte, []byte)
 		t.Fatalf("close trace output file: %v", err)
 	}
 
-	cmd := exec.Command(litracePath, "-e", filter, "-o", traceFile.Name(), fixturePath)
+	cmdArgs := append(append([]string{}, args...), "-o", traceFile.Name(), fixturePath)
+	cmd := exec.Command(litracePath, cmdArgs...)
 	cmd.Dir = root
 	runOutput, err := cmd.CombinedOutput()
 	if err != nil {

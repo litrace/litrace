@@ -251,11 +251,32 @@ func formatArg(ev Event, idx int) string {
 	}
 }
 
-func formatArgs(ev Event) string {
+func openNeedsMode(flags uint64) bool {
+	return flags&unix.O_CREAT != 0 || flags&unix.O_TMPFILE == unix.O_TMPFILE
+}
+
+func effectiveArgCount(ev Event) int {
 	count := int(ev.ArgCount)
 	if count > len(ev.Args) {
 		count = len(ev.Args)
 	}
+
+	switch ev.SyscallID {
+	case int64(unix.SYS_OPEN):
+		if count >= 3 && !openNeedsMode(ev.Args[1]) {
+			return 2
+		}
+	case int64(unix.SYS_OPENAT):
+		if count >= 4 && !openNeedsMode(ev.Args[2]) {
+			return 3
+		}
+	}
+
+	return count
+}
+
+func formatArgs(ev Event) string {
+	count := effectiveArgCount(ev)
 
 	parts := make([]string, 0, count)
 	for i := 0; i < count; i++ {

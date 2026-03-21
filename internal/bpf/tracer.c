@@ -114,6 +114,18 @@ static const struct syscall_arg_schema scalar_syscall_schemas[] = {
 		       ARG_NONE},
 	 },
 	{
+	 .syscall_id = __NR_open,
+	 .arg_count = 3,
+	 .arg_types = {VAR_ARG_STRING, ARG_FLAGS, ARG_MODE, ARG_NONE, ARG_NONE,
+		       ARG_NONE},
+	 },
+	{
+	 .syscall_id = __NR_openat,
+	 .arg_count = 4,
+	 .arg_types = {ARG_FD, VAR_ARG_STRING, ARG_FLAGS, ARG_MODE, ARG_NONE,
+		       ARG_NONE},
+	 },
+	{
 	 .syscall_id = __NR_read,
 	 .arg_count = 3,
 	 .arg_types = {ARG_FD, VAR_ARG_BYTES, ARG_UINT, ARG_NONE, ARG_NONE,

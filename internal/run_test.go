@@ -5,6 +5,8 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+
+	"golang.org/x/sys/unix"
 )
 
 func TestRunRequiresTraceOutput(t *testing.T) {
@@ -79,6 +81,91 @@ func TestFormatExitLine(t *testing.T) {
 			got := FormatExitLine(tt.ws)
 			if got != tt.want {
 				t.Fatalf("FormatExitLine(%#x) = %q, want %q", uint32(tt.ws), got, tt.want)
+			}
+		})
+	}
+}
+
+func TestShouldOutputEventPathFilter(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		cfg  Config
+		ev   Event
+		want bool
+	}{
+		{
+			name: "no path filter accepts event",
+			cfg:  Config{},
+			ev:   Event{SyscallID: int64(unix.SYS_CLOSE)},
+			want: true,
+		},
+		{
+			name: "open exact path match",
+			cfg:  Config{TracePaths: []string{"/tmp/target"}},
+			ev: Event{
+				SyscallID:  int64(unix.SYS_OPEN),
+				ArgTypes:   [6]uint8{varArgString},
+				VarCount:   1,
+				PayloadLen: 11,
+				VarDesc: [6]VarArgDesc{{
+					ArgIndex: 0,
+					Length:   11,
+				}},
+				Payload: [512]byte{'/', 't', 'm', 'p', '/', 't', 'a', 'r', 'g', 'e', 't'},
+			},
+			want: true,
+		},
+		{
+			name: "openat exact path mismatch",
+			cfg:  Config{TracePaths: []string{"/tmp/target"}},
+			ev: Event{
+				SyscallID:  int64(unix.SYS_OPENAT),
+				ArgTypes:   [6]uint8{argFD, varArgString},
+				VarCount:   1,
+				PayloadLen: 10,
+				VarDesc: [6]VarArgDesc{{
+					ArgIndex: 1,
+					Length:   10,
+				}},
+				Payload: [512]byte{'/', 't', 'm', 'p', '/', 'o', 't', 'h', 'e', 'r'},
+			},
+			want: false,
+		},
+		{
+			name: "non path syscall rejected when path filter active",
+			cfg:  Config{TracePaths: []string{"/tmp/target"}},
+			ev:   Event{SyscallID: int64(unix.SYS_CLOSE)},
+			want: false,
+		},
+		{
+			name: "truncated path rejected for deterministic exact match",
+			cfg:  Config{TracePaths: []string{"/tmp/target"}},
+			ev: Event{
+				SyscallID:  int64(unix.SYS_OPEN),
+				ArgTypes:   [6]uint8{varArgString},
+				VarCount:   1,
+				PayloadLen: 5,
+				VarDesc: [6]VarArgDesc{{
+					ArgIndex: 0,
+					Length:   5,
+					Flags:    varFlagTruncated,
+				}},
+				Payload: [512]byte{'/', 't', 'm', 'p', '/'},
+			},
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := shouldOutputEvent(tt.cfg, tt.ev)
+			if got != tt.want {
+				t.Fatalf("shouldOutputEvent() = %v, want %v", got, tt.want)
 			}
 		})
 	}

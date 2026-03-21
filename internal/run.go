@@ -23,6 +23,7 @@ type Config struct {
 	AttachPIDs      []int
 	FollowForks     bool
 	TraceSyscallIDs map[int64]struct{}
+	TracePaths      []string
 }
 
 type Options struct {
@@ -146,6 +147,9 @@ func Run(cfg Config, opts Options) (ws syscall.WaitStatus, err error) {
 		ev, err := DecodeEvent(rawEvent)
 		if err != nil {
 			fmt.Fprintf(opts.Stderr, "litrace: decoding event: %v\n", err)
+			continue
+		}
+		if !shouldOutputEvent(cfg, ev) {
 			continue
 		}
 		fmt.Fprintf(opts.TraceOutput, "%s\n", FormatOutputLine(ev, rootTGID))
@@ -289,4 +293,50 @@ func traceTargetTGIDs(attachPIDs []int, launchPID int) []uint32 {
 		return targets
 	}
 	return []uint32{uint32(launchPID)}
+}
+
+func shouldOutputEvent(cfg Config, ev Event) bool {
+	if len(cfg.TracePaths) == 0 {
+		return true
+	}
+
+	path, ok := eventTracePath(ev)
+	if !ok {
+		return false
+	}
+
+	for _, candidate := range cfg.TracePaths {
+		if candidate == path {
+			return true
+		}
+	}
+	return false
+}
+
+func eventTracePath(ev Event) (string, bool) {
+	var argIndex int
+
+	switch ev.SyscallID {
+	case int64(unix.SYS_OPEN):
+		argIndex = 0
+	case int64(unix.SYS_OPENAT):
+		argIndex = 1
+	default:
+		return "", false
+	}
+
+	desc, ok := findVarArgDesc(ev, argIndex)
+	if !ok {
+		return "", false
+	}
+	if desc.Flags != varFlagNone {
+		return "", false
+	}
+
+	payload, ok := varPayloadSlice(ev, desc)
+	if !ok {
+		return "", false
+	}
+
+	return string(payload), true
 }

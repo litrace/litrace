@@ -17,6 +17,7 @@ type Config struct {
 	FollowForks     bool
 	TraceOutputPath string
 	TraceSyscallIDs map[int64]struct{}
+	TracePaths      []string
 	AttachPIDs      []int
 	ProgramName     string
 	ProgramPath     string
@@ -24,13 +25,14 @@ type Config struct {
 }
 
 func usageError(exeName string) error {
-	return fmt.Errorf("usage: %s [-f] [-o FILE] [-p PID[,PID...]] <program> [args...]", exeName)
+	return fmt.Errorf("usage: %s [-f] [-o FILE] [-p PID[,PID...]] [-P PATH] <program> [args...]", exeName)
 }
 
 func ParseArgs(exeName string, args []string) (Config, error) {
 	cfg := Config{TraceSyscallIDs: make(map[int64]struct{})}
 	var traceExpressions []string
 	var attachExpressions []string
+	var tracePaths []string
 
 	for _, arg := range args {
 		if arg == "--" || arg == "-" || !strings.HasPrefix(arg, "-") {
@@ -48,6 +50,7 @@ func ParseArgs(exeName string, args []string) (Config, error) {
 	fs.BoolVarP(&cfg.FollowForks, "follow-forks", "f", false, "follow child processes created via fork/clone")
 	fs.StringVarP(&cfg.TraceOutputPath, "output", "o", "", "write trace output to FILE")
 	fs.StringArrayVarP(&attachExpressions, "attach", "p", nil, "trace existing processes by PID")
+	fs.StringArrayVarP(&tracePaths, "trace-path", "P", nil, "trace only syscalls accessing PATH")
 	fs.StringArrayVarP(&traceExpressions, "trace", "e", nil, "trace only specified syscall names")
 
 	if err := fs.Parse(args); err != nil {
@@ -94,6 +97,12 @@ func ParseArgs(exeName string, args []string) (Config, error) {
 		return Config{}, err
 	}
 	cfg.AttachPIDs = attachPIDs
+
+	normalizedTracePaths, err := parseTracePaths(tracePaths)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.TracePaths = normalizedTracePaths
 
 	args = fs.Args()
 
@@ -149,6 +158,22 @@ func parseAttachExpressions(expressions []string) ([]int, error) {
 	}
 
 	return pids, nil
+}
+
+func parseTracePaths(paths []string) ([]string, error) {
+	if len(paths) == 0 {
+		return nil, nil
+	}
+
+	normalized := make([]string, 0, len(paths))
+	for _, path := range paths {
+		if path == "" {
+			return nil, fmt.Errorf("invalid -P path %q: empty path", path)
+		}
+		normalized = append(normalized, path)
+	}
+
+	return normalized, nil
 }
 
 func parseTraceExpressions(expressions []string) (map[int64]struct{}, error) {
