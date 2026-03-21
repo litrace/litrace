@@ -49,16 +49,7 @@ func main() {
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	defer signal.Stop(sigCh)
 
-	ws, err := trace.Run(trace.Config{
-		ProgramName:     cfg.ProgramName,
-		ProgramPath:     cfg.ProgramPath,
-		ProgramArgs:     cfg.ProgramArgs,
-		AttachPIDs:      cfg.AttachPIDs,
-		FollowForks:     cfg.FollowForks,
-		SummaryOnly:     cfg.SummaryOnly,
-		TraceSyscallIDs: cfg.TraceSyscallIDs,
-		TracePaths:      cfg.TracePaths,
-	}, trace.Options{
+	ws, err := trace.Run(cfg.Trace, trace.Options{
 		Stdin:       os.Stdin,
 		Stdout:      os.Stdout,
 		Stderr:      os.Stderr,

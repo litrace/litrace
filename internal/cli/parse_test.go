@@ -110,49 +110,49 @@ func TestParseArgs(t *testing.T) {
 			if err != nil {
 				t.Fatalf("ParseArgs() unexpected error: %v", err)
 			}
-			if cfg.FollowForks != tt.wantFollow {
-				t.Fatalf("ParseArgs() FollowForks mismatch: got %v want %v", cfg.FollowForks, tt.wantFollow)
+			if cfg.Trace.FollowForks != tt.wantFollow {
+				t.Fatalf("ParseArgs() FollowForks mismatch: got %v want %v", cfg.Trace.FollowForks, tt.wantFollow)
 			}
-			if cfg.SummaryOnly != tt.wantSummary {
-				t.Fatalf("ParseArgs() SummaryOnly mismatch: got %v want %v", cfg.SummaryOnly, tt.wantSummary)
+			if cfg.Trace.SummaryOnly != tt.wantSummary {
+				t.Fatalf("ParseArgs() SummaryOnly mismatch: got %v want %v", cfg.Trace.SummaryOnly, tt.wantSummary)
 			}
 			if cfg.TraceOutputPath != tt.wantTraceOut {
 				t.Fatalf("ParseArgs() TraceOutputPath mismatch: got %q want %q", cfg.TraceOutputPath, tt.wantTraceOut)
 			}
-			if cfg.TraceSyscallIDs == nil {
+			if cfg.Trace.TraceSyscallIDs == nil {
 				t.Fatalf("ParseArgs() TraceSyscallIDs should be initialized")
 			}
-			if len(cfg.TraceSyscallIDs) != 0 {
-				t.Fatalf("ParseArgs() TraceSyscallIDs length mismatch: got %d want %d", len(cfg.TraceSyscallIDs), 0)
+			if len(cfg.Trace.TraceSyscallIDs) != 0 {
+				t.Fatalf("ParseArgs() TraceSyscallIDs length mismatch: got %d want %d", len(cfg.Trace.TraceSyscallIDs), 0)
 			}
-			if len(cfg.AttachPIDs) != len(tt.wantAttach) {
-				t.Fatalf("ParseArgs() AttachPIDs length mismatch: got %d want %d", len(cfg.AttachPIDs), len(tt.wantAttach))
+			if len(cfg.Trace.AttachPIDs) != len(tt.wantAttach) {
+				t.Fatalf("ParseArgs() AttachPIDs length mismatch: got %d want %d", len(cfg.Trace.AttachPIDs), len(tt.wantAttach))
 			}
-			for i := range cfg.AttachPIDs {
-				if cfg.AttachPIDs[i] != tt.wantAttach[i] {
-					t.Fatalf("ParseArgs() AttachPIDs[%d] mismatch: got %d want %d", i, cfg.AttachPIDs[i], tt.wantAttach[i])
+			for i := range cfg.Trace.AttachPIDs {
+				if cfg.Trace.AttachPIDs[i] != tt.wantAttach[i] {
+					t.Fatalf("ParseArgs() AttachPIDs[%d] mismatch: got %d want %d", i, cfg.Trace.AttachPIDs[i], tt.wantAttach[i])
 				}
 			}
-			if len(cfg.TracePaths) != len(tt.wantPaths) {
-				t.Fatalf("ParseArgs() TracePaths length mismatch: got %d want %d", len(cfg.TracePaths), len(tt.wantPaths))
+			if len(cfg.Trace.TracePaths) != len(tt.wantPaths) {
+				t.Fatalf("ParseArgs() TracePaths length mismatch: got %d want %d", len(cfg.Trace.TracePaths), len(tt.wantPaths))
 			}
-			for i := range cfg.TracePaths {
-				if cfg.TracePaths[i] != tt.wantPaths[i] {
-					t.Fatalf("ParseArgs() TracePaths[%d] mismatch: got %q want %q", i, cfg.TracePaths[i], tt.wantPaths[i])
+			for i := range cfg.Trace.TracePaths {
+				if cfg.Trace.TracePaths[i] != tt.wantPaths[i] {
+					t.Fatalf("ParseArgs() TracePaths[%d] mismatch: got %q want %q", i, cfg.Trace.TracePaths[i], tt.wantPaths[i])
 				}
 			}
-			if cfg.ProgramName != tt.wantProgName {
-				t.Fatalf("ParseArgs() ProgramName mismatch: got %q want %q", cfg.ProgramName, tt.wantProgName)
+			if cfg.Trace.ProgramName != tt.wantProgName {
+				t.Fatalf("ParseArgs() ProgramName mismatch: got %q want %q", cfg.Trace.ProgramName, tt.wantProgName)
 			}
-			if cfg.ProgramPath != tt.wantProgPath {
-				t.Fatalf("ParseArgs() ProgramPath mismatch: got %q want %q", cfg.ProgramPath, tt.wantProgPath)
+			if cfg.Trace.ProgramPath != tt.wantProgPath {
+				t.Fatalf("ParseArgs() ProgramPath mismatch: got %q want %q", cfg.Trace.ProgramPath, tt.wantProgPath)
 			}
-			if len(cfg.ProgramArgs) != len(tt.wantProgArgs) {
-				t.Fatalf("ParseArgs() ProgramArgs length mismatch: got %d want %d", len(cfg.ProgramArgs), len(tt.wantProgArgs))
+			if len(cfg.Trace.ProgramArgs) != len(tt.wantProgArgs) {
+				t.Fatalf("ParseArgs() ProgramArgs length mismatch: got %d want %d", len(cfg.Trace.ProgramArgs), len(tt.wantProgArgs))
 			}
-			for i := range cfg.ProgramArgs {
-				if cfg.ProgramArgs[i] != tt.wantProgArgs[i] {
-					t.Fatalf("ParseArgs() ProgramArgs[%d] mismatch: got %q want %q", i, cfg.ProgramArgs[i], tt.wantProgArgs[i])
+			for i := range cfg.Trace.ProgramArgs {
+				if cfg.Trace.ProgramArgs[i] != tt.wantProgArgs[i] {
+					t.Fatalf("ParseArgs() ProgramArgs[%d] mismatch: got %q want %q", i, cfg.Trace.ProgramArgs[i], tt.wantProgArgs[i])
 				}
 			}
 		})
@@ -226,17 +226,17 @@ func TestParseArgsAttachFilter(t *testing.T) {
 			if err != nil {
 				t.Fatalf("ParseArgs() unexpected error: %v", err)
 			}
-			if len(cfg.AttachPIDs) != len(tt.wantPIDs) {
-				t.Fatalf("ParseArgs() AttachPIDs length mismatch: got %d want %d", len(cfg.AttachPIDs), len(tt.wantPIDs))
+			if len(cfg.Trace.AttachPIDs) != len(tt.wantPIDs) {
+				t.Fatalf("ParseArgs() AttachPIDs length mismatch: got %d want %d", len(cfg.Trace.AttachPIDs), len(tt.wantPIDs))
 			}
-			for i := range cfg.AttachPIDs {
-				if cfg.AttachPIDs[i] != tt.wantPIDs[i] {
-					t.Fatalf("ParseArgs() AttachPIDs[%d] mismatch: got %d want %d", i, cfg.AttachPIDs[i], tt.wantPIDs[i])
+			for i := range cfg.Trace.AttachPIDs {
+				if cfg.Trace.AttachPIDs[i] != tt.wantPIDs[i] {
+					t.Fatalf("ParseArgs() AttachPIDs[%d] mismatch: got %d want %d", i, cfg.Trace.AttachPIDs[i], tt.wantPIDs[i])
 				}
 			}
-			requireTraceIDs(t, cfg.TraceSyscallIDs, tt.wantTrace...)
-			if cfg.ProgramName != "" || cfg.ProgramPath != "" || len(cfg.ProgramArgs) != 0 {
-				t.Fatalf("ParseArgs() expected empty program fields in attach mode, got ProgramName=%q ProgramPath=%q ProgramArgs=%v", cfg.ProgramName, cfg.ProgramPath, cfg.ProgramArgs)
+			requireTraceIDs(t, cfg.Trace.TraceSyscallIDs, tt.wantTrace...)
+			if cfg.Trace.ProgramName != "" || cfg.Trace.ProgramPath != "" || len(cfg.Trace.ProgramArgs) != 0 {
+				t.Fatalf("ParseArgs() expected empty program fields in attach mode, got ProgramName=%q ProgramPath=%q ProgramArgs=%v", cfg.Trace.ProgramName, cfg.Trace.ProgramPath, cfg.Trace.ProgramArgs)
 			}
 		})
 	}
@@ -289,15 +289,15 @@ func TestParseArgsTracePath(t *testing.T) {
 			if err != nil {
 				t.Fatalf("ParseArgs() unexpected error: %v", err)
 			}
-			if len(cfg.TracePaths) != len(tt.wantPaths) {
-				t.Fatalf("ParseArgs() TracePaths length mismatch: got %d want %d", len(cfg.TracePaths), len(tt.wantPaths))
+			if len(cfg.Trace.TracePaths) != len(tt.wantPaths) {
+				t.Fatalf("ParseArgs() TracePaths length mismatch: got %d want %d", len(cfg.Trace.TracePaths), len(tt.wantPaths))
 			}
-			for i := range cfg.TracePaths {
-				if cfg.TracePaths[i] != tt.wantPaths[i] {
-					t.Fatalf("ParseArgs() TracePaths[%d] mismatch: got %q want %q", i, cfg.TracePaths[i], tt.wantPaths[i])
+			for i := range cfg.Trace.TracePaths {
+				if cfg.Trace.TracePaths[i] != tt.wantPaths[i] {
+					t.Fatalf("ParseArgs() TracePaths[%d] mismatch: got %q want %q", i, cfg.Trace.TracePaths[i], tt.wantPaths[i])
 				}
 			}
-			requireTraceIDs(t, cfg.TraceSyscallIDs, tt.wantTrace...)
+			requireTraceIDs(t, cfg.Trace.TraceSyscallIDs, tt.wantTrace...)
 		})
 	}
 }
@@ -371,9 +371,9 @@ func TestParseArgsTraceFilter(t *testing.T) {
 			if err != nil {
 				t.Fatalf("ParseArgs() unexpected error: %v", err)
 			}
-			requireTraceIDs(t, cfg.TraceSyscallIDs, tt.wantIDs...)
-			if cfg.ProgramName != tt.wantProgName {
-				t.Fatalf("ParseArgs() ProgramName mismatch: got %q want %q", cfg.ProgramName, tt.wantProgName)
+			requireTraceIDs(t, cfg.Trace.TraceSyscallIDs, tt.wantIDs...)
+			if cfg.Trace.ProgramName != tt.wantProgName {
+				t.Fatalf("ParseArgs() ProgramName mismatch: got %q want %q", cfg.Trace.ProgramName, tt.wantProgName)
 			}
 		})
 	}

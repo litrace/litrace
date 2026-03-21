@@ -8,21 +8,15 @@ import (
 	"strconv"
 	"strings"
 
+	trace "litrace/internal"
 	"litrace/internal/syscalls"
 
 	"github.com/spf13/pflag"
 )
 
 type Config struct {
-	FollowForks     bool
-	SummaryOnly     bool
 	TraceOutputPath string
-	TraceSyscallIDs map[int64]struct{}
-	TracePaths      []string
-	AttachPIDs      []int
-	ProgramName     string
-	ProgramPath     string
-	ProgramArgs     []string
+	Trace           trace.Config
 }
 
 func usageError(exeName string) error {
@@ -30,7 +24,11 @@ func usageError(exeName string) error {
 }
 
 func ParseArgs(exeName string, args []string) (Config, error) {
-	cfg := Config{TraceSyscallIDs: make(map[int64]struct{})}
+	cfg := Config{
+		Trace: trace.Config{
+			TraceSyscallIDs: make(map[int64]struct{}),
+		},
+	}
 	var traceExpressions []string
 	var attachExpressions []string
 	var tracePaths []string
@@ -48,8 +46,8 @@ func ParseArgs(exeName string, args []string) (Config, error) {
 	fs := pflag.NewFlagSet(exeName, pflag.ContinueOnError)
 	fs.SetInterspersed(false)
 	fs.SetOutput(io.Discard)
-	fs.BoolVarP(&cfg.FollowForks, "follow-forks", "f", false, "follow child processes created via fork/clone")
-	fs.BoolVarP(&cfg.SummaryOnly, "summary-only", "c", false, "print aggregate syscall summary instead of per-syscall lines")
+	fs.BoolVarP(&cfg.Trace.FollowForks, "follow-forks", "f", false, "follow child processes created via fork/clone")
+	fs.BoolVarP(&cfg.Trace.SummaryOnly, "summary-only", "c", false, "print aggregate syscall summary instead of per-syscall lines")
 	fs.StringVarP(&cfg.TraceOutputPath, "output", "o", "", "write trace output to FILE")
 	fs.StringArrayVarP(&attachExpressions, "attach", "p", nil, "trace existing processes by PID")
 	fs.StringArrayVarP(&tracePaths, "trace-path", "P", nil, "trace only syscalls accessing PATH")
@@ -92,23 +90,23 @@ func ParseArgs(exeName string, args []string) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	cfg.TraceSyscallIDs = ids
+	cfg.Trace.TraceSyscallIDs = ids
 
 	attachPIDs, err := parseAttachExpressions(attachExpressions)
 	if err != nil {
 		return Config{}, err
 	}
-	cfg.AttachPIDs = attachPIDs
+	cfg.Trace.AttachPIDs = attachPIDs
 
 	normalizedTracePaths, err := parseTracePaths(tracePaths)
 	if err != nil {
 		return Config{}, err
 	}
-	cfg.TracePaths = normalizedTracePaths
+	cfg.Trace.TracePaths = normalizedTracePaths
 
 	args = fs.Args()
 
-	if len(cfg.AttachPIDs) > 0 {
+	if len(cfg.Trace.AttachPIDs) > 0 {
 		if len(args) != 0 {
 			return Config{}, fmt.Errorf("cannot use -p with a program")
 		}
@@ -124,9 +122,9 @@ func ParseArgs(exeName string, args []string) (Config, error) {
 		return Config{}, fmt.Errorf("%s: %w", args[0], err)
 	}
 
-	cfg.ProgramName = args[0]
-	cfg.ProgramPath = path
-	cfg.ProgramArgs = args[1:]
+	cfg.Trace.ProgramName = args[0]
+	cfg.Trace.ProgramPath = path
+	cfg.Trace.ProgramArgs = args[1:]
 	return cfg, nil
 }
 

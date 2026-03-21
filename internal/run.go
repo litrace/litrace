@@ -45,12 +45,6 @@ type attachResult struct {
 	Status syscall.WaitStatus
 }
 
-type syscallSummary struct {
-	Calls   uint64
-	Errors  uint64
-	TotalNs uint64
-}
-
 func signalName(sig syscall.Signal) string {
 	name := unix.SignalName(unix.Signal(sig))
 	if name != "" {
@@ -190,20 +184,6 @@ func Run(cfg Config, opts Options) (ws syscall.WaitStatus, err error) {
 		fmt.Fprintf(opts.TraceOutput, "%s\n", FormatExitLine(waitResult.Status))
 	}
 	return waitResult.Status, nil
-}
-
-func addSummaryEvent(summary map[int64]*syscallSummary, ev Event) {
-	stats := summary[ev.SyscallID]
-	if stats == nil {
-		stats = &syscallSummary{}
-		summary[ev.SyscallID] = stats
-	}
-
-	stats.Calls++
-	if ev.Ret < 0 {
-		stats.Errors++
-	}
-	stats.TotalNs += ev.Dur
 }
 
 func startLaunchTrace(cfg Config, opts Options) (*exec.Cmd, int, error) {
