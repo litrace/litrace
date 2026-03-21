@@ -37,3 +37,20 @@ func TestTracePathFDLifecycle(t *testing.T) {
 
 	assertExactOutput(t, traceOutput, fixtureOutput)
 }
+
+func TestTracePathOpenatDirFDRelative(t *testing.T) {
+	requireRoot(t)
+
+	root := repoRoot(t)
+	fixturePath := buildFixtureSource(t, root, "path_filter_openat_dirfd")
+
+	traceOutput, fixtureOutput := runLitraceArgs(
+		t,
+		root,
+		fixturePath,
+		"-e", "trace=openat",
+		"-P", "/tmp/litrace_path_filter_dirfd/target.tmp",
+	)
+
+	assertExactOutput(t, traceOutput, fixtureOutput)
+}

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -170,7 +171,11 @@ func parseTracePaths(paths []string) ([]string, error) {
 		if path == "" {
 			return nil, fmt.Errorf("invalid -P path %q: empty path", path)
 		}
-		normalized = append(normalized, path)
+		abs, err := filepath.Abs(path)
+		if err != nil {
+			return nil, fmt.Errorf("normalize -P path %q: %w", path, err)
+		}
+		normalized = append(normalized, filepath.Clean(abs))
 	}
 
 	return normalized, nil

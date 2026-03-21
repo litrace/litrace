@@ -1,6 +1,7 @@
 package trace
 
 import (
+	"path/filepath"
 	"testing"
 
 	"golang.org/x/sys/unix"
@@ -215,6 +216,61 @@ func TestPathFilterMatchesTaggedFDArgs(t *testing.T) {
 	}
 }
 
+func TestPathFilterResolvesRelativePathsAgainstProcessCWD(t *testing.T) {
+	t.Parallel()
+
+	target := filepath.Clean("/tmp/litrace-relative/target.txt")
+	filter := newPathFilter(Config{TracePaths: []string{target}})
+	filter.cwdByPID[100] = filepath.Dir(target)
+
+	openEv := pathFilterOpenEvent(int64(unix.SYS_OPEN), filepath.Base(target), 5)
+	if !filter.shouldOutput(openEv) {
+		t.Fatal("relative open should match against cached cwd")
+	}
+
+	readEv := Event{
+		Pid:       100,
+		SyscallID: int64(unix.SYS_READ),
+		Ret:       1,
+		ArgCount:  3,
+		Args:      [6]uint64{5, 0, 1},
+		ArgTypes:  [6]uint8{argFD, argPtr, argUint},
+	}
+	if !filter.shouldOutput(readEv) {
+		t.Fatal("read on fd opened from relative path should be printed")
+	}
+}
+
+func TestPathFilterResolvesOpenatRelativeToTrackedDirFD(t *testing.T) {
+	t.Parallel()
+
+	baseDir := filepath.Clean("/tmp/litrace-openat-dir")
+	target := filepath.Join(baseDir, "target.txt")
+	filter := newPathFilter(Config{TracePaths: []string{target}})
+
+	dirOpen := pathFilterOpenEvent(int64(unix.SYS_OPEN), baseDir, 10)
+	if filter.shouldOutput(dirOpen) {
+		t.Fatal("opening unmatched base directory should not be printed")
+	}
+
+	openatEv := pathFilterOpenAtEvent(10, "target.txt", 11)
+	if !filter.shouldOutput(openatEv) {
+		t.Fatal("openat relative to tracked dirfd should match target path")
+	}
+
+	readEv := Event{
+		Pid:       100,
+		SyscallID: int64(unix.SYS_READ),
+		Ret:       1,
+		ArgCount:  3,
+		Args:      [6]uint64{11, 0, 1},
+		ArgTypes:  [6]uint8{argFD, argPtr, argUint},
+	}
+	if !filter.shouldOutput(readEv) {
+		t.Fatal("read on fd opened through dirfd-relative openat should be printed")
+	}
+}
+
 func pathFilterOpenEvent(syscallID int64, path string, ret int64) Event {
 	ev := Event{
 		Pid:        100,
@@ -238,5 +294,11 @@ func pathFilterOpenEvent(syscallID int64, path string, ret int64) Event {
 		Length:   uint16(len(path)),
 	}
 	copy(ev.Payload[:], []byte(path))
+	return ev
+}
+
+func pathFilterOpenAtEvent(dirfd uint64, path string, ret int64) Event {
+	ev := pathFilterOpenEvent(int64(unix.SYS_OPENAT), path, ret)
+	ev.Args[0] = dirfd
 	return ev
 }

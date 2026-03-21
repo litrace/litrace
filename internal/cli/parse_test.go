@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -87,7 +88,7 @@ func TestParseArgs(t *testing.T) {
 		{
 			name:         "supports trace path before program",
 			args:         []string{"-P", "/tmp/target", "/bin/echo", "hi"},
-			wantPaths:    []string{"/tmp/target"},
+			wantPaths:    []string{filepath.Clean(mustAbs(t, "/tmp/target"))},
 			wantProgName: "/bin/echo",
 			wantProgPath: "/bin/echo",
 			wantProgArgs: []string{"hi"},
@@ -253,17 +254,17 @@ func TestParseArgsTracePath(t *testing.T) {
 		{
 			name:      "single path selector",
 			args:      []string{"-P", "/tmp/one", "/bin/echo"},
-			wantPaths: []string{"/tmp/one"},
+			wantPaths: []string{filepath.Clean(mustAbs(t, "/tmp/one"))},
 		},
 		{
 			name:      "repeated path selectors preserve order",
 			args:      []string{"-P", "/tmp/one", "-P", "relative/path", "-P", "/tmp/one", "/bin/echo"},
-			wantPaths: []string{"/tmp/one", "relative/path", "/tmp/one"},
+			wantPaths: []string{filepath.Clean(mustAbs(t, "/tmp/one")), filepath.Clean(mustAbs(t, "relative/path")), filepath.Clean(mustAbs(t, "/tmp/one"))},
 		},
 		{
 			name:      "path selector combines with trace selector",
 			args:      []string{"-P", "/tmp/one", "-e", "trace=openat", "/bin/echo"},
-			wantPaths: []string{"/tmp/one"},
+			wantPaths: []string{filepath.Clean(mustAbs(t, "/tmp/one"))},
 			wantTrace: []int64{257},
 		},
 		{
@@ -300,6 +301,16 @@ func TestParseArgsTracePath(t *testing.T) {
 			requireTraceIDs(t, cfg.Trace.TraceSyscallIDs, tt.wantTrace...)
 		})
 	}
+}
+
+func mustAbs(t *testing.T, path string) string {
+	t.Helper()
+
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		t.Fatalf("filepath.Abs(%q): %v", path, err)
+	}
+	return abs
 }
 
 func TestParseArgsTraceFilter(t *testing.T) {
