@@ -7,6 +7,7 @@ import (
 
 type Event struct {
 	Ts          uint64
+	Dur         uint64
 	SyscallID   int64
 	Ret         int64
 	Args        [6]uint64

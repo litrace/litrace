@@ -15,6 +15,7 @@ import (
 
 type Config struct {
 	FollowForks     bool
+	SummaryOnly     bool
 	TraceOutputPath string
 	TraceSyscallIDs map[int64]struct{}
 	TracePaths      []string
@@ -25,7 +26,7 @@ type Config struct {
 }
 
 func usageError(exeName string) error {
-	return fmt.Errorf("usage: %s [-f] [-o FILE] [-p PID[,PID...]] [-P PATH] <program> [args...]", exeName)
+	return fmt.Errorf("usage: %s [-f] [-c] [-o FILE] [-p PID[,PID...]] [-P PATH] <program> [args...]", exeName)
 }
 
 func ParseArgs(exeName string, args []string) (Config, error) {
@@ -48,6 +49,7 @@ func ParseArgs(exeName string, args []string) (Config, error) {
 	fs.SetInterspersed(false)
 	fs.SetOutput(io.Discard)
 	fs.BoolVarP(&cfg.FollowForks, "follow-forks", "f", false, "follow child processes created via fork/clone")
+	fs.BoolVarP(&cfg.SummaryOnly, "summary-only", "c", false, "print aggregate syscall summary instead of per-syscall lines")
 	fs.StringVarP(&cfg.TraceOutputPath, "output", "o", "", "write trace output to FILE")
 	fs.StringArrayVarP(&attachExpressions, "attach", "p", nil, "trace existing processes by PID")
 	fs.StringArrayVarP(&tracePaths, "trace-path", "P", nil, "trace only syscalls accessing PATH")

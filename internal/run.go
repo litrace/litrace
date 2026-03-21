@@ -22,6 +22,7 @@ type Config struct {
 	ProgramArgs     []string
 	AttachPIDs      []int
 	FollowForks     bool
+	SummaryOnly     bool
 	TraceSyscallIDs map[int64]struct{}
 	TracePaths      []string
 }
@@ -42,6 +43,12 @@ type ChildWaitResult struct {
 
 type attachResult struct {
 	Status syscall.WaitStatus
+}
+
+type syscallSummary struct {
+	Calls   uint64
+	Errors  uint64
+	TotalNs uint64
 }
 
 func signalName(sig syscall.Signal) string {
@@ -134,6 +141,7 @@ func Run(cfg Config, opts Options) (ws syscall.WaitStatus, err error) {
 		startLaunchWait(handle, launchCmd, launchDone)
 	}
 
+	summary := make(map[int64]*syscallSummary)
 	for {
 		rawEvent, err := handle.ReadEvent()
 		if err != nil {
@@ -152,11 +160,18 @@ func Run(cfg Config, opts Options) (ws syscall.WaitStatus, err error) {
 		if !shouldOutputEvent(cfg, ev) {
 			continue
 		}
+		if cfg.SummaryOnly {
+			addSummaryEvent(summary, ev)
+			continue
+		}
 		fmt.Fprintf(opts.TraceOutput, "%s\n", FormatOutputLine(ev, rootTGID))
 	}
 
 	if len(cfg.AttachPIDs) > 0 {
 		result := <-attachDone
+		if cfg.SummaryOnly {
+			fmt.Fprint(opts.TraceOutput, FormatSummary(summary))
+		}
 		return result.Status, nil
 	}
 
@@ -169,8 +184,26 @@ func Run(cfg Config, opts Options) (ws syscall.WaitStatus, err error) {
 	if !waitResult.HasStatus {
 		return 0, fmt.Errorf("failed to determine child wait status")
 	}
-	fmt.Fprintf(opts.TraceOutput, "%s\n", FormatExitLine(waitResult.Status))
+	if cfg.SummaryOnly {
+		fmt.Fprint(opts.TraceOutput, FormatSummary(summary))
+	} else {
+		fmt.Fprintf(opts.TraceOutput, "%s\n", FormatExitLine(waitResult.Status))
+	}
 	return waitResult.Status, nil
+}
+
+func addSummaryEvent(summary map[int64]*syscallSummary, ev Event) {
+	stats := summary[ev.SyscallID]
+	if stats == nil {
+		stats = &syscallSummary{}
+		summary[ev.SyscallID] = stats
+	}
+
+	stats.Calls++
+	if ev.Ret < 0 {
+		stats.Errors++
+	}
+	stats.TotalNs += ev.Dur
 }
 
 func startLaunchTrace(cfg Config, opts Options) (*exec.Cmd, int, error) {

@@ -50,6 +50,7 @@ struct var_arg_desc {
 
 struct event {
 	__u64 ts;
+	__u64 dur;
 	long syscall_id;
 	long ret;
 	__u64 args[6];
@@ -722,6 +723,7 @@ int trace_sys_exit(struct sys_exit_args *ctx)
 		return 0;
 
 	e->ts = state->ts;
+	e->dur = bpf_ktime_get_ns() - state->ts;
 	e->pid = tgid;
 	e->tid = tid;
 	e->seq = state->seq;

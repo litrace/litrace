@@ -26,6 +26,7 @@ func TestParseArgs(t *testing.T) {
 		wantAttach   []int
 		wantPaths    []string
 		wantFollow   bool
+		wantSummary  bool
 		wantTraceOut string
 		wantProgName string
 		wantProgPath string
@@ -35,7 +36,7 @@ func TestParseArgs(t *testing.T) {
 		{
 			name:    "requires program",
 			args:    []string{},
-			wantErr: "usage: litrace [-f] [-o FILE] [-p PID[,PID...]] [-P PATH] <program> [args...]",
+			wantErr: "usage: litrace [-f] [-c] [-o FILE] [-p PID[,PID...]] [-P PATH] <program> [args...]",
 		},
 		{
 			name:    "rejects unknown option",
@@ -54,6 +55,14 @@ func TestParseArgs(t *testing.T) {
 			name:         "supports -o trace output file",
 			args:         []string{"-o", "/tmp/litrace.out", "/bin/echo", "hi"},
 			wantTraceOut: "/tmp/litrace.out",
+			wantProgName: "/bin/echo",
+			wantProgPath: "/bin/echo",
+			wantProgArgs: []string{"hi"},
+		},
+		{
+			name:         "supports summary mode",
+			args:         []string{"-c", "/bin/echo", "hi"},
+			wantSummary:  true,
 			wantProgName: "/bin/echo",
 			wantProgPath: "/bin/echo",
 			wantProgArgs: []string{"hi"},
@@ -104,6 +113,9 @@ func TestParseArgs(t *testing.T) {
 			if cfg.FollowForks != tt.wantFollow {
 				t.Fatalf("ParseArgs() FollowForks mismatch: got %v want %v", cfg.FollowForks, tt.wantFollow)
 			}
+			if cfg.SummaryOnly != tt.wantSummary {
+				t.Fatalf("ParseArgs() SummaryOnly mismatch: got %v want %v", cfg.SummaryOnly, tt.wantSummary)
+			}
 			if cfg.TraceOutputPath != tt.wantTraceOut {
 				t.Fatalf("ParseArgs() TraceOutputPath mismatch: got %q want %q", cfg.TraceOutputPath, tt.wantTraceOut)
 			}
@@ -149,26 +161,26 @@ func TestParseArgs(t *testing.T) {
 
 func TestParseArgsAttachFilter(t *testing.T) {
 	tests := []struct {
-		name       string
-		args       []string
-		wantPIDs   []int
-		wantErr    string
-		wantTrace  []int64
+		name      string
+		args      []string
+		wantPIDs  []int
+		wantErr   string
+		wantTrace []int64
 	}{
 		{
-			name:      "single attach pid",
-			args:      []string{"-p", "42"},
-			wantPIDs:  []int{42},
+			name:     "single attach pid",
+			args:     []string{"-p", "42"},
+			wantPIDs: []int{42},
 		},
 		{
-			name:      "comma separated attach pids",
-			args:      []string{"-p", "42,84"},
-			wantPIDs:  []int{42, 84},
+			name:     "comma separated attach pids",
+			args:     []string{"-p", "42,84"},
+			wantPIDs: []int{42, 84},
 		},
 		{
-			name:      "repeated attach expressions deduplicate",
-			args:      []string{"-p", "42,84", "-p", "84", "-p", "126"},
-			wantPIDs:  []int{42, 84, 126},
+			name:     "repeated attach expressions deduplicate",
+			args:     []string{"-p", "42,84", "-p", "84", "-p", "126"},
+			wantPIDs: []int{42, 84, 126},
 		},
 		{
 			name:      "attach mode can combine with trace filter",

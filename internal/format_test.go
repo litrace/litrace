@@ -1,6 +1,7 @@
 package trace
 
 import (
+	"strings"
 	"testing"
 
 	"golang.org/x/sys/unix"
@@ -284,6 +285,28 @@ func TestSimpleArgsDecode(t *testing.T) {
 				t.Fatalf("formatEventLine() mismatch for %s: got %q want %q", tt.name, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestFormatSummary(t *testing.T) {
+	summary := map[int64]*syscallSummary{
+		int64(unix.SYS_OPENAT): {Calls: 2, Errors: 1, TotalNs: 3000},
+		int64(unix.SYS_CLOSE):  {Calls: 1, Errors: 0, TotalNs: 1000},
+	}
+
+	got := FormatSummary(summary)
+	wantLines := []string{
+		"% time     seconds  usecs/call     calls    errors syscall",
+		"------ ----------- ----------- --------- --------- ----------------",
+		" 75.00    0.000003           1         2         1 openat",
+		" 25.00    0.000001           1         1         0 close",
+		"100.00    0.000004           1         3         1 total",
+	}
+
+	for _, line := range wantLines {
+		if !strings.Contains(got, line) {
+			t.Fatalf("FormatSummary() missing line %q in output:\n%s", line, got)
+		}
 	}
 }
 

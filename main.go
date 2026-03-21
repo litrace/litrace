@@ -55,6 +55,7 @@ func main() {
 		ProgramArgs:     cfg.ProgramArgs,
 		AttachPIDs:      cfg.AttachPIDs,
 		FollowForks:     cfg.FollowForks,
+		SummaryOnly:     cfg.SummaryOnly,
 		TraceSyscallIDs: cfg.TraceSyscallIDs,
 		TracePaths:      cfg.TracePaths,
 	}, trace.Options{
