@@ -2,7 +2,7 @@
 
 #include <linux/bpf.h>
 #include <linux/sched.h>
-#include <asm/unistd.h>
+#include <asm/stat.h>
 #include <bpf/bpf_helpers.h>
 
 #include "types.h"
@@ -121,8 +121,7 @@ static __always_inline void set_syscall_arg_schema(long syscall_id,
 
 #pragma unroll
 	for (j = 0; j < SYSCALL_SCHEMA_COUNT; j++) {
-		const struct syscall_arg_schema *schema =
-		    &syscall_schemas[j];
+		const struct syscall_arg_schema *schema = &syscall_schemas[j];
 
 		if (schema->syscall_id != syscall_id)
 			continue;
@@ -605,17 +604,26 @@ int trace_sys_exit(struct sys_exit_args *ctx)
 		e->arg_types[1] = VAR_ARG_STRING;
 	}
 
-	if (state->syscall_id == __NR_openat2 || state->syscall_id == __NR_newfstatat
-	    || state->syscall_id == __NR_faccessat || state->syscall_id == __NR_statx
+	if (state->syscall_id == __NR_openat2
+	    || state->syscall_id == __NR_newfstatat
+	    || state->syscall_id == __NR_faccessat
+	    || state->syscall_id == __NR_statx
 	    || state->syscall_id == __NR_faccessat2) {
 		append_var_string(e, 1, (const char *)state->args[1]);
 		e->arg_types[1] = VAR_ARG_STRING;
 	}
 
-	if (state->syscall_id == __NR_access || state->syscall_id == __NR_newstat
+	if (state->syscall_id == __NR_access
+	    || state->syscall_id == __NR_newstat
 	    || state->syscall_id == __NR_newlstat) {
 		append_var_string(e, 0, (const char *)state->args[0]);
 		e->arg_types[0] = VAR_ARG_STRING;
+	}
+
+	if (state->syscall_id == __NR_newfstat && ctx->ret >= 0) {
+		append_var_bytes(e, 1, (const void *)state->args[1],
+				 sizeof(struct stat));
+		e->arg_types[1] = VAR_ARG_BYTES;
 	}
 
 	if (state->syscall_id == __NR_chdir || state->syscall_id == __NR_unlink) {
@@ -635,7 +643,8 @@ int trace_sys_exit(struct sys_exit_args *ctx)
 		e->arg_types[1] = VAR_ARG_STRING;
 	}
 
-	if (state->syscall_id == __NR_renameat || state->syscall_id == __NR_renameat2) {
+	if (state->syscall_id == __NR_renameat
+	    || state->syscall_id == __NR_renameat2) {
 		append_var_string(e, 1, (const char *)state->args[1]);
 		e->arg_types[1] = VAR_ARG_STRING;
 		append_var_string(e, 3, (const char *)state->args[3]);

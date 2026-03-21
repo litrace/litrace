@@ -3,6 +3,7 @@ package trace
 import (
 	"strings"
 	"testing"
+	"unsafe"
 
 	"golang.org/x/sys/unix"
 )
@@ -264,6 +265,62 @@ func TestSimpleArgsDecode(t *testing.T) {
 			want: "read(4, \"\", 10) = 0",
 		},
 		{
+			name: "fstat with decoded stat buffer",
+			ev: func() event {
+				payload := encodeStatPayload(t, unix.Stat_t{
+					Mode: unix.S_IFREG | 0644,
+					Size: 131471,
+				})
+				ev := event{
+					SyscallID:  int64(unix.SYS_FSTAT),
+					Ret:        0,
+					ArgCount:   2,
+					Args:       [6]uint64{3, 0x7ffd47b78430},
+					ArgTypes:   [6]uint8{argFD, varArgBytes},
+					VarCount:   1,
+					PayloadLen: uint16(len(payload)),
+				}
+				ev.VarDesc[0] = varArgDesc{
+					ArgIndex: 1,
+					Offset:   0,
+					Length:   uint16(len(payload)),
+				}
+				copy(ev.Payload[:], payload)
+				return ev
+			}(),
+			want: "fstat(3, {st_mode=S_IFREG|0644, st_size=131471, ...}) = 0",
+		},
+		{
+			name: "fstat error keeps pointer formatting",
+			ev: event{
+				SyscallID: int64(unix.SYS_FSTAT),
+				Ret:       -int64(unix.EBADF),
+				ArgCount:  2,
+				Args:      [6]uint64{3, 0x7ffd47b78430},
+				ArgTypes:  [6]uint8{argFD, argPtr},
+			},
+			want: "fstat(3, 0x7ffd47b78430) = -1 EBADF (bad file descriptor)",
+		},
+		{
+			name: "fstat truncated stat buffer falls back to placeholder",
+			ev: event{
+				SyscallID: int64(unix.SYS_FSTAT),
+				Ret:       0,
+				ArgCount:  2,
+				Args:      [6]uint64{3, 0x7ffd47b78430},
+				ArgTypes:  [6]uint8{argFD, varArgBytes},
+				VarCount:  1,
+				VarDesc: [6]varArgDesc{{
+					ArgIndex: 1,
+					Offset:   0,
+					Length:   8,
+				}},
+				PayloadLen: 8,
+				Payload:    [512]byte{1, 2, 3, 4, 5, 6, 7, 8},
+			},
+			want: "fstat(3, <?>) = 0",
+		},
+		{
 			name: "execve with filename and argv summary",
 			ev: event{
 				SyscallID: int64(unix.SYS_EXECVE),
@@ -354,6 +411,15 @@ func TestSimpleArgsDecode(t *testing.T) {
 			}
 		})
 	}
+}
+
+func encodeStatPayload(t *testing.T, st unix.Stat_t) []byte {
+	t.Helper()
+
+	size := int(unsafe.Sizeof(st))
+	buf := make([]byte, size)
+	copy(buf, unsafe.Slice((*byte)(unsafe.Pointer(&st)), size))
+	return buf
 }
 
 func TestFormatSummary(t *testing.T) {

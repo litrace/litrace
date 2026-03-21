@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"unsafe"
 
 	"litrace/internal/syscalls"
 
@@ -61,6 +62,9 @@ var syscallFormatters = map[int64]syscallFormatter{
 	int64(unix.SYS_OPENAT): {
 		formatArg:         formatOpenArg(2, 0),
 		effectiveArgCount: effectiveOpenArgCount(2, 3),
+	},
+	int64(unix.SYS_FSTAT): {
+		formatArg: formatFstatArg,
 	},
 }
 
@@ -221,6 +225,46 @@ func formatVarArg(ev Event, idx int) (string, bool) {
 	}
 }
 
+func formatFstatArg(ev Event, idx int) (string, bool) {
+	if idx != 1 || ev.Ret < 0 {
+		return "", false
+	}
+
+	desc, ok := findVarArgDesc(ev, idx)
+	if !ok {
+		return "", false
+	}
+	if desc.Flags != varFlagNone {
+		return "<?>", true
+	}
+
+	payload, ok := varPayloadSlice(ev, desc)
+	if !ok {
+		return "<?>", true
+	}
+
+	rendered, ok := formatCapturedStat(payload)
+	if !ok {
+		return "<?>", true
+	}
+	return rendered, true
+}
+
+func formatCapturedStat(payload []byte) (string, bool) {
+	var st unix.Stat_t
+	size := int(unsafe.Sizeof(st))
+	if len(payload) < size {
+		return "", false
+	}
+
+	copy(unsafe.Slice((*byte)(unsafe.Pointer(&st)), size), payload[:size])
+
+	return fmt.Sprintf("{st_mode=%s, st_size=%d, ...}",
+		formatStatMode(uint32(st.Mode)),
+		st.Size,
+	), true
+}
+
 func formatRetDefault(ret int64) string {
 	if ret >= 0 {
 		return fmt.Sprintf("%d", ret)
@@ -248,6 +292,36 @@ func formatRet(ev Event) string {
 
 func formatMode(raw uint64) string {
 	return fmt.Sprintf("%#03o", uint32(raw)&0xffff)
+}
+
+func formatStatMode(mode uint32) string {
+	fileType := formatStatFileType(mode)
+	perms := fmt.Sprintf("%#03o", mode&07777)
+	if fileType == "" {
+		return perms
+	}
+	return fileType + "|" + perms
+}
+
+func formatStatFileType(mode uint32) string {
+	switch mode & unix.S_IFMT {
+	case unix.S_IFREG:
+		return "S_IFREG"
+	case unix.S_IFDIR:
+		return "S_IFDIR"
+	case unix.S_IFLNK:
+		return "S_IFLNK"
+	case unix.S_IFCHR:
+		return "S_IFCHR"
+	case unix.S_IFBLK:
+		return "S_IFBLK"
+	case unix.S_IFIFO:
+		return "S_IFIFO"
+	case unix.S_IFSOCK:
+		return "S_IFSOCK"
+	default:
+		return ""
+	}
 }
 
 func formatWhence(raw uint64) string {
@@ -386,14 +460,14 @@ func formatArgDefault(ev Event, idx int) string {
 }
 
 func formatArg(ev Event, idx int) string {
-	if rendered, ok := formatVarArg(ev, idx); ok {
-		return rendered
-	}
-
 	if formatter, ok := lookupSyscallFormatter(ev); ok && formatter.formatArg != nil {
 		if rendered, ok := formatter.formatArg(ev, idx); ok {
 			return rendered
 		}
+	}
+
+	if rendered, ok := formatVarArg(ev, idx); ok {
+		return rendered
 	}
 
 	return formatArgDefault(ev, idx)
