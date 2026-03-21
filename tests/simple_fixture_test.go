@@ -21,6 +21,14 @@ func TestFchmod(t *testing.T) {
 	runSimpleFixtureMatch(t, "fchmod", "trace=fchmod")
 }
 
+func TestClockGettime(t *testing.T) {
+	runSimpleFixtureMatch(t, "clock_gettime", "trace=clock_gettime")
+}
+
+func TestEventfd(t *testing.T) {
+	runSimpleFixtureMatch(t, "eventfd", "trace=eventfd")
+}
+
 func TestLseek(t *testing.T) {
 	runSimpleFixtureMatch(t, "lseek", "trace=lseek")
 }

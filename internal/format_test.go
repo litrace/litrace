@@ -45,6 +45,28 @@ func TestSimpleArgsDecode(t *testing.T) {
 			want: "lseek(3, 128, SEEK_SET) = 128",
 		},
 		{
+			name: "clock_gettime with int and pointer args",
+			ev: event{
+				SyscallID: int64(unix.SYS_CLOCK_GETTIME),
+				Ret:       0,
+				ArgCount:  2,
+				Args:      [6]uint64{uint64(unix.CLOCK_REALTIME), 0x7ffc1234},
+				ArgTypes:  [6]uint8{argInt, argPtr},
+			},
+			want: "clock_gettime(0, 0x7ffc1234) = 0",
+		},
+		{
+			name: "eventfd with unsigned arg",
+			ev: event{
+				SyscallID: int64(unix.SYS_EVENTFD),
+				Ret:       3,
+				ArgCount:  1,
+				Args:      [6]uint64{7},
+				ArgTypes:  [6]uint8{argUint},
+			},
+			want: "eventfd(7) = 3",
+		},
+		{
 			name: "fchmod mode octal",
 			ev: event{
 				SyscallID: int64(unix.SYS_FCHMOD),
