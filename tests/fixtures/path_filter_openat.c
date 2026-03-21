@@ -59,7 +59,7 @@ main(void)
 	fd = openat(AT_FDCWD, match, O_RDONLY);
 	if (fd == -1)
 		fail("openat match");
-	printf("openat(%d, \"%s\", 0x0) = %d\n", AT_FDCWD, match, fd);
+	printf("openat(AT_FDCWD, \"%s\", O_RDONLY) = %d\n", match, fd);
 	if (close(fd))
 		fail("close match");
 

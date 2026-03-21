@@ -77,6 +77,23 @@ func runLitraceArgs(t *testing.T, root, fixturePath string, args ...string) ([]b
 	return traceOutput, runOutput
 }
 
+func buildFixtureSource(t *testing.T, root, fixtureName string) string {
+	t.Helper()
+
+	srcPath := filepath.Join(root, "tests", "fixtures", fixtureName+".c")
+	mustExist(t, srcPath)
+
+	outPath := filepath.Join(t.TempDir(), fixtureName)
+	cmd := exec.Command("cc", srcPath, "-o", outPath)
+	cmd.Dir = root
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("build fixture %q: %v\noutput:\n%s", fixtureName, err, output)
+	}
+
+	return outPath
+}
+
 func runLitraceInProcess(t *testing.T, fixturePath string, followForks bool, traceNames ...string) ([]byte, []byte, []byte) {
 	t.Helper()
 

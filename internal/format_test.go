@@ -127,7 +127,7 @@ func TestSimpleArgsDecode(t *testing.T) {
 				PayloadLen: 17,
 				Payload:    [512]byte{'/', 't', 'm', 'p', '/', 'l', 'i', 't', 'r', 'a', 'c', 'e', '_', 't', 'e', 's', 't'},
 			},
-			want: "openat(-100, \"/tmp/litrace_test\", 0x0) = 3",
+			want: "openat(AT_FDCWD, \"/tmp/litrace_test\", O_RDONLY) = 3",
 		},
 		{
 			name: "openat with create flag includes mode",
@@ -146,7 +146,26 @@ func TestSimpleArgsDecode(t *testing.T) {
 				PayloadLen: 17,
 				Payload:    [512]byte{'/', 't', 'm', 'p', '/', 'l', 'i', 't', 'r', 'a', 'c', 'e', '_', 't', 'e', 's', 't'},
 			},
-			want: "openat(-100, \"/tmp/litrace_test\", 0x40, 0600) = 3",
+			want: "openat(AT_FDCWD, \"/tmp/litrace_test\", O_RDONLY|O_CREAT, 0600) = 3",
+		},
+		{
+			name: "openat with symbolic flags preserves unknown bits",
+			ev: event{
+				SyscallID: int64(unix.SYS_OPENAT),
+				Ret:       3,
+				ArgCount:  4,
+				Args:      [6]uint64{9, 0, uint64(unix.O_WRONLY | unix.O_CLOEXEC | 0x80000000), 0},
+				ArgTypes:  [6]uint8{argFD, varArgString, argFlags, argMode},
+				VarCount:  1,
+				VarDesc: [6]varArgDesc{{
+					ArgIndex: 1,
+					Offset:   0,
+					Length:   17,
+				}},
+				PayloadLen: 17,
+				Payload:    [512]byte{'/', 't', 'm', 'p', '/', 'l', 'i', 't', 'r', 'a', 'c', 'e', '_', 't', 'e', 's', 't'},
+			},
+			want: "openat(9, \"/tmp/litrace_test\", O_WRONLY|O_CLOEXEC|0x80000000) = 3",
 		},
 		{
 			name: "open path with truncation marker",
@@ -166,7 +185,7 @@ func TestSimpleArgsDecode(t *testing.T) {
 				PayloadLen: 5,
 				Payload:    [512]byte{'/', 'v', 'a', 'r', '/'},
 			},
-			want: "open(\"/var/\"..., 0x0) = 4",
+			want: "open(\"/var/\"..., O_RDONLY) = 4",
 		},
 		{
 			name: "write with variable bytes preview",

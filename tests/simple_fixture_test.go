@@ -29,6 +29,38 @@ func TestEventfd(t *testing.T) {
 	runSimpleFixtureMatch(t, "eventfd", "trace=eventfd")
 }
 
+func TestOpen(t *testing.T) {
+	requireRoot(t)
+
+	root := repoRoot(t)
+	fixturePath := buildFixtureSource(t, root, "open")
+	traceOutput, fixtureOutput := runLitraceArgs(
+		t,
+		root,
+		fixturePath,
+		"-e", "trace=open",
+		"-P", "open.sample",
+	)
+
+	assertExactOutput(t, traceOutput, fixtureOutput)
+}
+
+func TestOpenat(t *testing.T) {
+	requireRoot(t)
+
+	root := repoRoot(t)
+	fixturePath := buildFixtureSource(t, root, "openat")
+	traceOutput, fixtureOutput := runLitraceArgs(
+		t,
+		root,
+		fixturePath,
+		"-e", "trace=openat",
+		"-P", "openat.sample",
+	)
+
+	assertExactOutput(t, traceOutput, fixtureOutput)
+}
+
 func TestLseek(t *testing.T) {
 	runSimpleFixtureMatch(t, "lseek", "trace=lseek")
 }

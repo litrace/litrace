@@ -13,6 +13,57 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+type enumEntry struct {
+	value uint64
+	name  string
+}
+
+type flagEntry struct {
+	value uint64
+	name  string
+}
+
+type syscallFormatter struct {
+	formatArg         func(ev Event, idx int) (string, bool)
+	effectiveArgCount func(ev Event) int
+}
+
+var openModeAccess = []enumEntry{
+	{value: unix.O_RDONLY, name: "O_RDONLY"},
+	{value: unix.O_WRONLY, name: "O_WRONLY"},
+	{value: unix.O_RDWR, name: "O_RDWR"},
+}
+
+var openModeFlags = []flagEntry{
+	{value: unix.O_APPEND, name: "O_APPEND"},
+	{value: unix.O_ASYNC, name: "O_ASYNC"},
+	{value: unix.O_CLOEXEC, name: "O_CLOEXEC"},
+	{value: unix.O_CREAT, name: "O_CREAT"},
+	{value: unix.O_DIRECT, name: "O_DIRECT"},
+	{value: unix.O_EXCL, name: "O_EXCL"},
+	{value: unix.O_NOATIME, name: "O_NOATIME"},
+	{value: unix.O_NOCTTY, name: "O_NOCTTY"},
+	{value: unix.O_NOFOLLOW, name: "O_NOFOLLOW"},
+	{value: unix.O_NONBLOCK, name: "O_NONBLOCK"},
+	{value: unix.O_PATH, name: "O_PATH"},
+	{value: unix.O_SYNC, name: "O_SYNC"},
+	{value: unix.O_TMPFILE, name: "O_TMPFILE"},
+	{value: unix.O_DIRECTORY, name: "O_DIRECTORY"},
+	{value: unix.O_DSYNC, name: "O_DSYNC"},
+	{value: unix.O_TRUNC, name: "O_TRUNC"},
+}
+
+var syscallFormatters = map[int64]syscallFormatter{
+	int64(unix.SYS_OPEN): {
+		formatArg:         formatOpenArg(1, -1),
+		effectiveArgCount: effectiveOpenArgCount(1, 2),
+	},
+	int64(unix.SYS_OPENAT): {
+		formatArg:         formatOpenArg(2, 0),
+		effectiveArgCount: effectiveOpenArgCount(2, 3),
+	},
+}
+
 const (
 	argNone  uint8 = 0
 	argInt   uint8 = 1
@@ -217,11 +268,93 @@ func formatWhence(raw uint64) string {
 	}
 }
 
-func formatArg(ev Event, idx int) string {
-	if rendered, ok := formatVarArg(ev, idx); ok {
-		return rendered
+func formatEnum(raw uint64, table []enumEntry, fallback func(uint64) string) string {
+	for _, entry := range table {
+		if entry.value == raw {
+			return entry.name
+		}
+	}
+	return fallback(raw)
+}
+
+func formatFlags(raw uint64, zero string, table []flagEntry) string {
+	if raw == 0 && zero != "" {
+		return zero
 	}
 
+	parts := make([]string, 0, len(table)+1)
+	remaining := raw
+	for _, entry := range table {
+		if entry.value == 0 {
+			continue
+		}
+		if remaining&entry.value == entry.value {
+			parts = append(parts, entry.name)
+			remaining &^= entry.value
+		}
+	}
+
+	if remaining != 0 || len(parts) == 0 {
+		parts = append(parts, fmt.Sprintf("0x%x", remaining))
+	}
+
+	return strings.Join(parts, "|")
+}
+
+func formatDirFD(raw uint64) string {
+	fd := int64(int32(raw))
+	if fd == unix.AT_FDCWD {
+		return "AT_FDCWD"
+	}
+	return fmt.Sprintf("%d", fd)
+}
+
+func formatOpenFlags(raw uint64) string {
+	const accessMask = unix.O_ACCMODE
+
+	access := formatEnum(raw&accessMask, openModeAccess, func(v uint64) string {
+		return fmt.Sprintf("0x%x", v)
+	})
+	rest := raw &^ accessMask
+	if rest == 0 {
+		return access
+	}
+
+	return access + "|" + formatFlags(rest, "", openModeFlags)
+}
+
+func formatOpenArg(flagsIdx int, dirfdIdx int) func(ev Event, idx int) (string, bool) {
+	return func(ev Event, idx int) (string, bool) {
+		switch idx {
+		case flagsIdx:
+			return formatOpenFlags(ev.Args[idx]), true
+		case dirfdIdx:
+			return formatDirFD(ev.Args[idx]), true
+		default:
+			return "", false
+		}
+	}
+}
+
+func effectiveOpenArgCount(flagsIdx int, modeIdx int) func(ev Event) int {
+	return func(ev Event) int {
+		count := int(ev.ArgCount)
+		if count > len(ev.Args) {
+			count = len(ev.Args)
+		}
+		if count > modeIdx && !openNeedsMode(ev.Args[flagsIdx]) {
+			return modeIdx
+		}
+		return count
+	}
+}
+
+func lookupSyscallFormatter(ev Event) (syscallFormatter, bool) {
+	formatter, ok := syscallFormatters[ev.SyscallID]
+	return formatter, ok
+}
+
+func formatArgDefault(ev Event, idx int) string {
 	typ := ev.ArgTypes[idx]
 	raw := ev.Args[idx]
 
@@ -252,25 +385,32 @@ func formatArg(ev Event, idx int) string {
 	}
 }
 
+func formatArg(ev Event, idx int) string {
+	if rendered, ok := formatVarArg(ev, idx); ok {
+		return rendered
+	}
+
+	if formatter, ok := lookupSyscallFormatter(ev); ok && formatter.formatArg != nil {
+		if rendered, ok := formatter.formatArg(ev, idx); ok {
+			return rendered
+		}
+	}
+
+	return formatArgDefault(ev, idx)
+}
+
 func openNeedsMode(flags uint64) bool {
 	return flags&unix.O_CREAT != 0 || flags&unix.O_TMPFILE == unix.O_TMPFILE
 }
 
 func effectiveArgCount(ev Event) int {
+	if formatter, ok := lookupSyscallFormatter(ev); ok && formatter.effectiveArgCount != nil {
+		return formatter.effectiveArgCount(ev)
+	}
+
 	count := int(ev.ArgCount)
 	if count > len(ev.Args) {
 		count = len(ev.Args)
-	}
-
-	switch ev.SyscallID {
-	case int64(unix.SYS_OPEN):
-		if count >= 3 && !openNeedsMode(ev.Args[1]) {
-			return 2
-		}
-	case int64(unix.SYS_OPENAT):
-		if count >= 4 && !openNeedsMode(ev.Args[2]) {
-			return 3
-		}
 	}
 
 	return count
