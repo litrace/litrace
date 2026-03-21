@@ -605,6 +605,19 @@ int trace_sys_exit(struct sys_exit_args *ctx)
 		e->arg_types[1] = VAR_ARG_STRING;
 	}
 
+	if (state->syscall_id == __NR_openat2 || state->syscall_id == __NR_newfstatat
+	    || state->syscall_id == __NR_faccessat || state->syscall_id == __NR_statx
+	    || state->syscall_id == __NR_faccessat2) {
+		append_var_string(e, 1, (const char *)state->args[1]);
+		e->arg_types[1] = VAR_ARG_STRING;
+	}
+
+	if (state->syscall_id == __NR_access || state->syscall_id == __NR_newstat
+	    || state->syscall_id == __NR_newlstat) {
+		append_var_string(e, 0, (const char *)state->args[0]);
+		e->arg_types[0] = VAR_ARG_STRING;
+	}
+
 	if (state->syscall_id == __NR_chdir || state->syscall_id == __NR_unlink) {
 		append_var_string(e, 0, (const char *)state->args[0]);
 		e->arg_types[0] = VAR_ARG_STRING;

@@ -33,6 +33,14 @@ func TestHandleTraceSyscallIDsPathFilterSupport(t *testing.T) {
 		int64(unix.SYS_RENAMEAT2),
 		int64(unix.SYS_UNLINK),
 		int64(unix.SYS_UNLINKAT),
+		int64(unix.SYS_ACCESS),
+		int64(unix.SYS_STAT),
+		int64(unix.SYS_LSTAT),
+		int64(unix.SYS_NEWFSTATAT),
+		int64(unix.SYS_FACCESSAT),
+		int64(unix.SYS_STATX),
+		int64(unix.SYS_OPENAT2),
+		int64(unix.SYS_FACCESSAT2),
 	} {
 		if _, ok := got[want]; !ok {
 			t.Fatalf("handleTraceSyscallIDs missing %d", want)
@@ -381,6 +389,56 @@ func TestPathFilterUnlinkClearsTrackedFDState(t *testing.T) {
 	}
 }
 
+func TestPathFilterMatchesNewfstatatRelativeToTrackedDirFD(t *testing.T) {
+	t.Parallel()
+
+	baseDir := filepath.Clean("/tmp/litrace-newfstatat-dir")
+	target := filepath.Join(baseDir, "target.txt")
+	filter := newPathFilter(Config{TracePaths: []string{target}})
+
+	dirOpen := pathFilterOpenEvent(int64(unix.SYS_OPEN), baseDir, 10)
+	if filter.shouldOutput(dirOpen) {
+		t.Fatal("opening unmatched base directory should not be printed")
+	}
+
+	statEv := pathFilterAtPathEvent(int64(unix.SYS_NEWFSTATAT), 10, 1, "target.txt", 0)
+	if !filter.shouldOutput(statEv) {
+		t.Fatal("newfstatat relative to tracked dirfd should match target path")
+	}
+}
+
+func TestPathFilterOpenat2SeedsTrackedFDs(t *testing.T) {
+	t.Parallel()
+
+	baseDir := filepath.Clean("/tmp/litrace-openat2-dir")
+	target := filepath.Join(baseDir, "target.txt")
+	filter := newPathFilter(Config{TracePaths: []string{target}})
+
+	dirOpen := pathFilterOpenEvent(int64(unix.SYS_OPEN), baseDir, 10)
+	if filter.shouldOutput(dirOpen) {
+		t.Fatal("opening unmatched base directory should not be printed")
+	}
+
+	openEv := pathFilterAtPathEvent(int64(unix.SYS_OPENAT2), 10, 1, "target.txt", 11)
+	openEv.ArgCount = 4
+	openEv.ArgTypes = [6]uint8{argFD, varArgString, argPtr, argUint}
+	if !filter.shouldOutput(openEv) {
+		t.Fatal("openat2 relative to tracked dirfd should match target path")
+	}
+
+	readEv := Event{
+		Pid:       100,
+		SyscallID: int64(unix.SYS_READ),
+		Ret:       1,
+		ArgCount:  3,
+		Args:      [6]uint64{11, 0, 1},
+		ArgTypes:  [6]uint8{argFD, argPtr, argUint},
+	}
+	if !filter.shouldOutput(readEv) {
+		t.Fatal("read on fd opened through openat2 should be printed")
+	}
+}
+
 func pathFilterOpenEvent(syscallID int64, path string, ret int64) Event {
 	ev := Event{
 		Pid:        100,
@@ -452,5 +510,24 @@ func pathFilterRenameEvent(syscallID int64, oldPath, newPath string, ret int64) 
 	ev.PayloadLen = uint16(len(oldPath) + len(newPath))
 	copy(ev.Payload[:], []byte(oldPath))
 	copy(ev.Payload[len(oldPath):], []byte(newPath))
+	return ev
+}
+
+func pathFilterAtPathEvent(syscallID int64, dirfd uint64, argIndex uint8, path string, ret int64) Event {
+	ev := Event{
+		Pid:        100,
+		SyscallID:  syscallID,
+		Ret:        ret,
+		ArgCount:   2,
+		Args:       [6]uint64{dirfd},
+		ArgTypes:   [6]uint8{argFD, varArgString},
+		VarCount:   1,
+		PayloadLen: uint16(len(path)),
+	}
+	ev.VarDesc[0] = VarArgDesc{
+		ArgIndex: argIndex,
+		Length:   uint16(len(path)),
+	}
+	copy(ev.Payload[:], []byte(path))
 	return ev
 }

@@ -44,7 +44,7 @@ func handleTraceSyscallIDs(cfg Config) map[int64]struct{} {
 		return cfg.TraceSyscallIDs
 	}
 
-	ids := make(map[int64]struct{}, len(cfg.TraceSyscallIDs)+14)
+	ids := make(map[int64]struct{}, len(cfg.TraceSyscallIDs)+22)
 	for id := range cfg.TraceSyscallIDs {
 		ids[id] = struct{}{}
 	}
@@ -64,6 +64,14 @@ func handleTraceSyscallIDs(cfg Config) map[int64]struct{} {
 		int64(unix.SYS_RENAMEAT2),
 		int64(unix.SYS_UNLINK),
 		int64(unix.SYS_UNLINKAT),
+		int64(unix.SYS_ACCESS),
+		int64(unix.SYS_STAT),
+		int64(unix.SYS_LSTAT),
+		int64(unix.SYS_NEWFSTATAT),
+		int64(unix.SYS_FACCESSAT),
+		int64(unix.SYS_STATX),
+		int64(unix.SYS_OPENAT2),
+		int64(unix.SYS_FACCESSAT2),
 	} {
 		ids[id] = struct{}{}
 	}
@@ -106,6 +114,8 @@ func (f *pathFilter) observe(ev Event) {
 	case int64(unix.SYS_OPEN):
 		f.observeOpen(ev, 0)
 	case int64(unix.SYS_OPENAT):
+		f.observeOpen(ev, 1)
+	case int64(unix.SYS_OPENAT2):
 		f.observeOpen(ev, 1)
 	case int64(unix.SYS_DUP):
 		f.observeDupRet(ev, 0)
@@ -284,9 +294,9 @@ func (f *pathFilter) matchesPath(ev Event) bool {
 	switch ev.SyscallID {
 	case int64(unix.SYS_OPEN):
 		return f.matchesPathAt(ev, 0)
-	case int64(unix.SYS_OPENAT):
+	case int64(unix.SYS_OPENAT), int64(unix.SYS_OPENAT2), int64(unix.SYS_NEWFSTATAT), int64(unix.SYS_FACCESSAT), int64(unix.SYS_STATX), int64(unix.SYS_FACCESSAT2):
 		return f.matchesPathAt(ev, 1)
-	case int64(unix.SYS_CHDIR), int64(unix.SYS_UNLINK):
+	case int64(unix.SYS_ACCESS), int64(unix.SYS_STAT), int64(unix.SYS_LSTAT), int64(unix.SYS_CHDIR), int64(unix.SYS_UNLINK):
 		return f.matchesPathAt(ev, 0)
 	case int64(unix.SYS_RENAME):
 		return f.matchesPathAt(ev, 0) || f.matchesPathAt(ev, 1)
@@ -489,7 +499,7 @@ func rewritePathPrefix(path, oldBase, newBase string) (string, bool) {
 
 func pathBaseFDArgIndex(syscallID int64, argIndex int) (int, bool) {
 	switch syscallID {
-	case int64(unix.SYS_OPENAT), int64(unix.SYS_UNLINKAT):
+	case int64(unix.SYS_OPENAT), int64(unix.SYS_OPENAT2), int64(unix.SYS_UNLINKAT), int64(unix.SYS_NEWFSTATAT), int64(unix.SYS_FACCESSAT), int64(unix.SYS_STATX), int64(unix.SYS_FACCESSAT2):
 		if argIndex == 1 {
 			return 0, true
 		}
@@ -500,7 +510,7 @@ func pathBaseFDArgIndex(syscallID int64, argIndex int) (int, bool) {
 		case 3:
 			return 2, true
 		}
-	case int64(unix.SYS_OPEN), int64(unix.SYS_CHDIR), int64(unix.SYS_UNLINK), int64(unix.SYS_RENAME):
+	case int64(unix.SYS_OPEN), int64(unix.SYS_ACCESS), int64(unix.SYS_STAT), int64(unix.SYS_LSTAT), int64(unix.SYS_CHDIR), int64(unix.SYS_UNLINK), int64(unix.SYS_RENAME):
 		return -1, true
 	}
 	return -1, false
