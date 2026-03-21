@@ -1,7 +1,7 @@
 Litrace is provided under the terms of the GNU General Public License version 2 only.
 
-Integration tests and fixtures in test/ are derived from the strace test suite which is provided under the terms of the
-GNU General Public License version 2 or later.
+Tests and fixtures in tests/ are derived from the strace test suite which is provided
+under the terms of the GNU General Public License version 2 or later.
 
                     GNU GENERAL PUBLIC LICENSE
                        Version 2, June 1991

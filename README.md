@@ -4,8 +4,9 @@ Litrace (pronounced "light rays") is a Linux system call tracer inspired by [str
 by [eBPF](https://ebpf.io/), Litrace aims to provide the same level of visibility as strace, but with significantly
 lower runtime [overhead](#Overhead).
 
-Litrace is written in Go and builds into a single statically linked binary with no runtime dependencies, making it easy
-to deploy.
+> Litrace is in early development and currently supports only `x86_64`.
+
+See [INSTALL](./INSTALL.md) for installation and build instructions.
 
 ## Some Features
 
