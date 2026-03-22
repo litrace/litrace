@@ -238,7 +238,7 @@ func TestPathFilterResolvesRelativePathsAgainstProcessCWD(t *testing.T) {
 
 	target := filepath.Clean("/tmp/litrace-relative/target.txt")
 	filter := newPathFilter(Config{TracePaths: []string{target}})
-	filter.cwdByPID[100] = filepath.Dir(target)
+	filter.stateForPID(100).cwd = filepath.Dir(target)
 
 	openEv := pathFilterOpenEvent(int64(unix.SYS_OPEN), filepath.Base(target), 5)
 	if !filter.shouldOutput(openEv) {
@@ -293,7 +293,7 @@ func TestPathFilterUpdatesCWDOnChdir(t *testing.T) {
 
 	target := filepath.Clean("/tmp/litrace-chdir/target.txt")
 	filter := newPathFilter(Config{TracePaths: []string{target}})
-	filter.cwdByPID[100] = "/tmp"
+	filter.stateForPID(100).cwd = "/tmp"
 
 	chdirEv := pathFilterSinglePathEvent(int64(unix.SYS_CHDIR), filepath.Dir(target), 0)
 	if filter.shouldOutput(chdirEv) {
@@ -337,7 +337,7 @@ func TestPathFilterRenameMovesTrackedFDState(t *testing.T) {
 	oldPath := filepath.Clean("/tmp/litrace-rename/old.txt")
 	newPath := filepath.Clean("/tmp/litrace-rename/new.txt")
 	filter := newPathFilter(Config{TracePaths: []string{newPath}})
-	filter.cwdByPID[100] = filepath.Dir(oldPath)
+	filter.stateForPID(100).cwd = filepath.Dir(oldPath)
 
 	openEv := pathFilterOpenEvent(int64(unix.SYS_OPEN), filepath.Base(oldPath), 5)
 	if filter.shouldOutput(openEv) {

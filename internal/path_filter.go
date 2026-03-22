@@ -10,11 +10,15 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+type processPathState struct {
+	cwd        string
+	trackedFDs map[uint64]struct{}
+	fdPaths    map[uint64]string
+}
+
 type pathFilter struct {
 	paths          map[string]struct{}
-	trackedFDs     map[uint32]map[uint64]struct{}
-	fdPaths        map[uint32]map[uint64]string
-	cwdByPID       map[uint32]string
+	stateByPID     map[uint32]*processPathState
 	userTraceIDs   map[int64]struct{}
 	userTraceAll   bool
 	pathFilterMode bool
@@ -23,9 +27,7 @@ type pathFilter struct {
 func newPathFilter(cfg Config) *pathFilter {
 	filter := &pathFilter{
 		paths:          make(map[string]struct{}, len(cfg.TracePaths)),
-		trackedFDs:     make(map[uint32]map[uint64]struct{}),
-		fdPaths:        make(map[uint32]map[uint64]string),
-		cwdByPID:       make(map[uint32]string),
+		stateByPID:     make(map[uint32]*processPathState),
 		userTraceIDs:   make(map[int64]struct{}, len(cfg.TraceSyscallIDs)),
 		userTraceAll:   len(cfg.TraceSyscallIDs) == 0,
 		pathFilterMode: len(cfg.TracePaths) > 0,
@@ -226,7 +228,7 @@ func (f *pathFilter) observeChdir(ev Event) {
 	if !ok {
 		return
 	}
-	f.cwdByPID[ev.Pid] = path
+	f.stateForPID(ev.Pid).cwd = path
 }
 
 func (f *pathFilter) observeFchdir(ev Event) {
@@ -237,7 +239,7 @@ func (f *pathFilter) observeFchdir(ev Event) {
 	if !ok {
 		return
 	}
-	f.cwdByPID[ev.Pid] = path
+	f.stateForPID(ev.Pid).cwd = path
 }
 
 func (f *pathFilter) observeRename(ev Event, oldIndex, newIndex int) {
@@ -367,40 +369,68 @@ func (f *pathFilter) resolvePathBase(ev Event, argIndex int) (string, bool) {
 	return path, true
 }
 
-func (f *pathFilter) trackFD(pid uint32, fd uint64) {
-	if fdSet := f.trackedFDs[pid]; fdSet != nil {
-		fdSet[fd] = struct{}{}
+func (f *pathFilter) stateForPID(pid uint32) *processPathState {
+	if state := f.stateByPID[pid]; state != nil {
+		return state
+	}
+	state := &processPathState{}
+	f.stateByPID[pid] = state
+	return state
+}
+
+func (f *pathFilter) stateForPIDIfPresent(pid uint32) *processPathState {
+	return f.stateByPID[pid]
+}
+
+func (f *pathFilter) maybeDropPIDState(pid uint32) {
+	state := f.stateByPID[pid]
+	if state == nil {
 		return
 	}
-	f.trackedFDs[pid] = map[uint64]struct{}{fd: {}}
+	hasCWD := state.cwd != ""
+	hasTrackedFDs := len(state.trackedFDs) > 0
+	hasFDPaths := len(state.fdPaths) > 0
+	if hasCWD || hasTrackedFDs || hasFDPaths {
+		return
+	}
+	delete(f.stateByPID, pid)
+}
+
+func (f *pathFilter) trackFD(pid uint32, fd uint64) {
+	state := f.stateForPID(pid)
+	if state.trackedFDs == nil {
+		state.trackedFDs = make(map[uint64]struct{})
+	}
+	state.trackedFDs[fd] = struct{}{}
 }
 
 func (f *pathFilter) untrackFD(pid uint32, fd uint64) {
-	fdSet := f.trackedFDs[pid]
-	if fdSet == nil {
+	state := f.stateForPIDIfPresent(pid)
+	if state == nil || state.trackedFDs == nil {
 		return
 	}
-	delete(fdSet, fd)
-	if len(fdSet) == 0 {
-		delete(f.trackedFDs, pid)
+	delete(state.trackedFDs, fd)
+	if len(state.trackedFDs) == 0 {
+		state.trackedFDs = nil
 	}
+	f.maybeDropPIDState(pid)
 }
 
 func (f *pathFilter) fdTracked(pid uint32, fd uint64) bool {
-	fdSet := f.trackedFDs[pid]
-	if fdSet == nil {
+	state := f.stateForPIDIfPresent(pid)
+	if state == nil || state.trackedFDs == nil {
 		return false
 	}
-	_, ok := fdSet[fd]
+	_, ok := state.trackedFDs[fd]
 	return ok
 }
 
 func (f *pathFilter) setFDPath(pid uint32, fd uint64, path string) {
-	if pathMap := f.fdPaths[pid]; pathMap != nil {
-		pathMap[fd] = path
-		return
+	state := f.stateForPID(pid)
+	if state.fdPaths == nil {
+		state.fdPaths = make(map[uint64]string)
 	}
-	f.fdPaths[pid] = map[uint64]string{fd: path}
+	state.fdPaths[fd] = path
 }
 
 func (f *pathFilter) syncTrackedFD(pid uint32, fd uint64, path string) {
@@ -412,28 +442,29 @@ func (f *pathFilter) syncTrackedFD(pid uint32, fd uint64, path string) {
 }
 
 func (f *pathFilter) unsetFDPath(pid uint32, fd uint64) {
-	pathMap := f.fdPaths[pid]
-	if pathMap == nil {
+	state := f.stateForPIDIfPresent(pid)
+	if state == nil || state.fdPaths == nil {
 		return
 	}
-	delete(pathMap, fd)
-	if len(pathMap) == 0 {
-		delete(f.fdPaths, pid)
+	delete(state.fdPaths, fd)
+	if len(state.fdPaths) == 0 {
+		state.fdPaths = nil
 	}
+	f.maybeDropPIDState(pid)
 }
 
 func (f *pathFilter) fdPath(pid uint32, fd uint64) (string, bool) {
-	pathMap := f.fdPaths[pid]
-	if pathMap == nil {
+	state := f.stateForPIDIfPresent(pid)
+	if state == nil || state.fdPaths == nil {
 		return "", false
 	}
-	path, ok := pathMap[fd]
+	path, ok := state.fdPaths[fd]
 	return path, ok
 }
 
 func (f *pathFilter) cwdForPID(pid uint32) (string, bool) {
-	if cwd, ok := f.cwdByPID[pid]; ok {
-		return cwd, true
+	if state := f.stateForPIDIfPresent(pid); state != nil && state.cwd != "" {
+		return state.cwd, true
 	}
 
 	cwd, err := os.Readlink(fmt.Sprintf("/proc/%d/cwd", pid))
@@ -441,46 +472,51 @@ func (f *pathFilter) cwdForPID(pid uint32) (string, bool) {
 		return "", false
 	}
 	cwd = filepath.Clean(cwd)
-	f.cwdByPID[pid] = cwd
+	f.stateForPID(pid).cwd = cwd
 	return cwd, true
 }
 
 func (f *pathFilter) rewritePIDPaths(pid uint32, oldPath, newPath string) {
-	if cwd, ok := f.cwdByPID[pid]; ok {
-		if rewritten, changed := rewritePathPrefix(cwd, oldPath, newPath); changed {
-			f.cwdByPID[pid] = rewritten
+	state := f.stateForPIDIfPresent(pid)
+	if state == nil {
+		return
+	}
+
+	if state.cwd != "" {
+		if rewritten, changed := rewritePathPrefix(state.cwd, oldPath, newPath); changed {
+			state.cwd = rewritten
 		}
 	}
 
-	pathMap := f.fdPaths[pid]
-	if pathMap == nil {
+	if state.fdPaths == nil {
 		return
 	}
-	for fd, path := range pathMap {
+	for fd, path := range state.fdPaths {
 		rewritten, changed := rewritePathPrefix(path, oldPath, newPath)
 		if !changed {
 			continue
 		}
-		pathMap[fd] = rewritten
+		state.fdPaths[fd] = rewritten
 		f.syncTrackedFD(pid, fd, rewritten)
 	}
 }
 
 func (f *pathFilter) dropPIDPaths(pid uint32, target string) {
-	pathMap := f.fdPaths[pid]
-	if pathMap == nil {
+	state := f.stateForPIDIfPresent(pid)
+	if state == nil || state.fdPaths == nil {
 		return
 	}
-	for fd, path := range pathMap {
+	for fd, path := range state.fdPaths {
 		if path != target {
 			continue
 		}
 		f.untrackFD(pid, fd)
-		delete(pathMap, fd)
+		delete(state.fdPaths, fd)
 	}
-	if len(pathMap) == 0 {
-		delete(f.fdPaths, pid)
+	if len(state.fdPaths) == 0 {
+		state.fdPaths = nil
 	}
+	f.maybeDropPIDState(pid)
 }
 
 func rewritePathPrefix(path, oldBase, newBase string) (string, bool) {
