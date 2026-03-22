@@ -13,12 +13,12 @@ import (
 func TestSimpleArgsDecode(t *testing.T) {
 	tests := []struct {
 		name string
-		ev   event
+		ev   Event
 		want string
 	}{
 		{
 			name: "close fd",
-			ev: event{
+			ev: Event{
 				SyscallID: int64(unix.SYS_CLOSE),
 				Ret:       0,
 				ArgCount:  1,
@@ -29,7 +29,7 @@ func TestSimpleArgsDecode(t *testing.T) {
 		},
 		{
 			name: "getpid has no arguments",
-			ev: event{
+			ev: Event{
 				SyscallID: int64(unix.SYS_GETPID),
 				Ret:       1234,
 				ArgCount:  0,
@@ -38,7 +38,7 @@ func TestSimpleArgsDecode(t *testing.T) {
 		},
 		{
 			name: "lseek with symbolic whence",
-			ev: event{
+			ev: Event{
 				SyscallID: int64(unix.SYS_LSEEK),
 				Ret:       128,
 				ArgCount:  3,
@@ -49,7 +49,7 @@ func TestSimpleArgsDecode(t *testing.T) {
 		},
 		{
 			name: "clock_gettime with int and pointer args",
-			ev: event{
+			ev: Event{
 				SyscallID: int64(unix.SYS_CLOCK_GETTIME),
 				Ret:       0,
 				ArgCount:  2,
@@ -60,7 +60,7 @@ func TestSimpleArgsDecode(t *testing.T) {
 		},
 		{
 			name: "mmap with symbolic prot and flags",
-			ev: event{
+			ev: Event{
 				SyscallID: int64(unix.SYS_MMAP),
 				Ret:       0x7fae60eaf000,
 				ArgCount:  6,
@@ -71,7 +71,7 @@ func TestSimpleArgsDecode(t *testing.T) {
 		},
 		{
 			name: "mmap with combined prot and flags preserves unknown bits",
-			ev: event{
+			ev: Event{
 				SyscallID: int64(unix.SYS_MMAP),
 				Ret:       0x7fae60eb0000,
 				ArgCount:  6,
@@ -82,7 +82,7 @@ func TestSimpleArgsDecode(t *testing.T) {
 		},
 		{
 			name: "mmap with prot none and error return",
-			ev: event{
+			ev: Event{
 				SyscallID: int64(unix.SYS_MMAP),
 				Ret:       -int64(unix.EPERM),
 				ArgCount:  6,
@@ -93,7 +93,7 @@ func TestSimpleArgsDecode(t *testing.T) {
 		},
 		{
 			name: "eventfd with unsigned arg",
-			ev: event{
+			ev: Event{
 				SyscallID: int64(unix.SYS_EVENTFD),
 				Ret:       3,
 				ArgCount:  1,
@@ -104,7 +104,7 @@ func TestSimpleArgsDecode(t *testing.T) {
 		},
 		{
 			name: "fchmod mode octal",
-			ev: event{
+			ev: Event{
 				SyscallID: int64(unix.SYS_FCHMOD),
 				Ret:       0,
 				ArgCount:  2,
@@ -115,7 +115,7 @@ func TestSimpleArgsDecode(t *testing.T) {
 		},
 		{
 			name: "umask mode argument and return octal",
-			ev: event{
+			ev: Event{
 				SyscallID: int64(unix.SYS_UMASK),
 				Ret:       0022,
 				ArgCount:  1,
@@ -126,7 +126,7 @@ func TestSimpleArgsDecode(t *testing.T) {
 		},
 		{
 			name: "umask error return keeps errno formatting",
-			ev: event{
+			ev: Event{
 				SyscallID: int64(unix.SYS_UMASK),
 				Ret:       -int64(unix.EPERM),
 				ArgCount:  1,
@@ -137,7 +137,7 @@ func TestSimpleArgsDecode(t *testing.T) {
 		},
 		{
 			name: "raw fallback for unknown syscall schema",
-			ev: event{
+			ev: Event{
 				SyscallID: 9999,
 				Ret:       -int64(unix.EPERM),
 				ArgCount:  2,
@@ -148,14 +148,14 @@ func TestSimpleArgsDecode(t *testing.T) {
 		},
 		{
 			name: "openat with variable path string",
-			ev: event{
+			ev: Event{
 				SyscallID: int64(unix.SYS_OPENAT),
 				Ret:       3,
 				ArgCount:  4,
 				Args:      [6]uint64{uint64(^uint32(99)), 0, 0, 0},
 				ArgTypes:  [6]uint8{argFD, varArgString, argFlags, argMode},
 				VarCount:  1,
-				VarDesc: [6]varArgDesc{{
+				VarDesc: [6]VarArgDesc{{
 					ArgIndex: 1,
 					Offset:   0,
 					Length:   17,
@@ -167,14 +167,14 @@ func TestSimpleArgsDecode(t *testing.T) {
 		},
 		{
 			name: "openat with create flag includes mode",
-			ev: event{
+			ev: Event{
 				SyscallID: int64(unix.SYS_OPENAT),
 				Ret:       3,
 				ArgCount:  4,
 				Args:      [6]uint64{uint64(^uint32(99)), 0, uint64(unix.O_CREAT), 0600},
 				ArgTypes:  [6]uint8{argFD, varArgString, argFlags, argMode},
 				VarCount:  1,
-				VarDesc: [6]varArgDesc{{
+				VarDesc: [6]VarArgDesc{{
 					ArgIndex: 1,
 					Offset:   0,
 					Length:   17,
@@ -186,14 +186,14 @@ func TestSimpleArgsDecode(t *testing.T) {
 		},
 		{
 			name: "openat with symbolic flags preserves unknown bits",
-			ev: event{
+			ev: Event{
 				SyscallID: int64(unix.SYS_OPENAT),
 				Ret:       3,
 				ArgCount:  4,
 				Args:      [6]uint64{9, 0, uint64(unix.O_WRONLY | unix.O_CLOEXEC | 0x80000000), 0},
 				ArgTypes:  [6]uint8{argFD, varArgString, argFlags, argMode},
 				VarCount:  1,
-				VarDesc: [6]varArgDesc{{
+				VarDesc: [6]VarArgDesc{{
 					ArgIndex: 1,
 					Offset:   0,
 					Length:   17,
@@ -205,14 +205,14 @@ func TestSimpleArgsDecode(t *testing.T) {
 		},
 		{
 			name: "open path with truncation marker",
-			ev: event{
+			ev: Event{
 				SyscallID: int64(unix.SYS_OPEN),
 				Ret:       4,
 				ArgCount:  3,
 				Args:      [6]uint64{0, 0, 0},
 				ArgTypes:  [6]uint8{varArgString, argFlags, argMode},
 				VarCount:  1,
-				VarDesc: [6]varArgDesc{{
+				VarDesc: [6]VarArgDesc{{
 					ArgIndex: 0,
 					Offset:   0,
 					Length:   5,
@@ -225,14 +225,14 @@ func TestSimpleArgsDecode(t *testing.T) {
 		},
 		{
 			name: "write with variable bytes preview",
-			ev: event{
+			ev: Event{
 				SyscallID: int64(unix.SYS_WRITE),
 				Ret:       6,
 				ArgCount:  3,
 				Args:      [6]uint64{1, 0, 6},
 				ArgTypes:  [6]uint8{argFD, varArgBytes, argUint},
 				VarCount:  1,
-				VarDesc: [6]varArgDesc{{
+				VarDesc: [6]VarArgDesc{{
 					ArgIndex: 1,
 					Offset:   0,
 					Length:   6,
@@ -244,14 +244,14 @@ func TestSimpleArgsDecode(t *testing.T) {
 		},
 		{
 			name: "write bytes truncation marker",
-			ev: event{
+			ev: Event{
 				SyscallID: int64(unix.SYS_WRITE),
 				Ret:       10,
 				ArgCount:  3,
 				Args:      [6]uint64{2, 0, 10},
 				ArgTypes:  [6]uint8{argFD, varArgBytes, argUint},
 				VarCount:  1,
-				VarDesc: [6]varArgDesc{{
+				VarDesc: [6]VarArgDesc{{
 					ArgIndex: 1,
 					Offset:   0,
 					Length:   4,
@@ -264,14 +264,14 @@ func TestSimpleArgsDecode(t *testing.T) {
 		},
 		{
 			name: "read with variable bytes preview uses return length",
-			ev: event{
+			ev: Event{
 				SyscallID: int64(unix.SYS_READ),
 				Ret:       3,
 				ArgCount:  3,
 				Args:      [6]uint64{4, 0, 10},
 				ArgTypes:  [6]uint8{argFD, varArgBytes, argUint},
 				VarCount:  1,
-				VarDesc: [6]varArgDesc{{
+				VarDesc: [6]VarArgDesc{{
 					ArgIndex: 1,
 					Offset:   0,
 					Length:   3,
@@ -283,14 +283,14 @@ func TestSimpleArgsDecode(t *testing.T) {
 		},
 		{
 			name: "read with zero-length payload renders empty string",
-			ev: event{
+			ev: Event{
 				SyscallID: int64(unix.SYS_READ),
 				Ret:       0,
 				ArgCount:  3,
 				Args:      [6]uint64{4, 0, 10},
 				ArgTypes:  [6]uint8{argFD, varArgBytes, argUint},
 				VarCount:  1,
-				VarDesc: [6]varArgDesc{{
+				VarDesc: [6]VarArgDesc{{
 					ArgIndex: 1,
 					Offset:   0,
 					Length:   0,
@@ -301,12 +301,12 @@ func TestSimpleArgsDecode(t *testing.T) {
 		},
 		{
 			name: "fstat with decoded stat buffer",
-			ev: func() event {
+			ev: func() Event {
 				payload := encodeStatPayload(unix.Stat_t{
 					Mode: unix.S_IFREG | 0644,
 					Size: 131471,
 				})
-				ev := event{
+				ev := Event{
 					SyscallID:  int64(unix.SYS_FSTAT),
 					Ret:        0,
 					ArgCount:   2,
@@ -315,7 +315,7 @@ func TestSimpleArgsDecode(t *testing.T) {
 					VarCount:   1,
 					PayloadLen: uint16(len(payload)),
 				}
-				ev.VarDesc[0] = varArgDesc{
+				ev.VarDesc[0] = VarArgDesc{
 					ArgIndex: 1,
 					Offset:   0,
 					Length:   uint16(len(payload)),
@@ -327,12 +327,12 @@ func TestSimpleArgsDecode(t *testing.T) {
 		},
 		{
 			name: "stat with decoded stat buffer",
-			ev: func() event {
+			ev: func() Event {
 				payload := encodeStatPayload(unix.Stat_t{
 					Mode: unix.S_IFREG | 0644,
 					Size: 42,
 				})
-				ev := event{
+				ev := Event{
 					SyscallID:  int64(unix.SYS_STAT),
 					Ret:        0,
 					ArgCount:   2,
@@ -340,8 +340,8 @@ func TestSimpleArgsDecode(t *testing.T) {
 					VarCount:   2,
 					PayloadLen: uint16(11 + len(payload)),
 				}
-				ev.VarDesc[0] = varArgDesc{ArgIndex: 0, Offset: 0, Length: 11}
-				ev.VarDesc[1] = varArgDesc{ArgIndex: 1, Offset: 11, Length: uint16(len(payload))}
+				ev.VarDesc[0] = VarArgDesc{ArgIndex: 0, Offset: 0, Length: 11}
+				ev.VarDesc[1] = VarArgDesc{ArgIndex: 1, Offset: 11, Length: uint16(len(payload))}
 				copy(ev.Payload[:], []byte("stat.sample"))
 				copy(ev.Payload[11:], payload)
 				return ev
@@ -350,12 +350,12 @@ func TestSimpleArgsDecode(t *testing.T) {
 		},
 		{
 			name: "lstat with decoded stat buffer",
-			ev: func() event {
+			ev: func() Event {
 				payload := encodeStatPayload(unix.Stat_t{
 					Mode: unix.S_IFLNK | 0777,
 					Size: 12,
 				})
-				ev := event{
+				ev := Event{
 					SyscallID:  int64(unix.SYS_LSTAT),
 					Ret:        0,
 					ArgCount:   2,
@@ -363,8 +363,8 @@ func TestSimpleArgsDecode(t *testing.T) {
 					VarCount:   2,
 					PayloadLen: uint16(12 + len(payload)),
 				}
-				ev.VarDesc[0] = varArgDesc{ArgIndex: 0, Offset: 0, Length: 12}
-				ev.VarDesc[1] = varArgDesc{ArgIndex: 1, Offset: 12, Length: uint16(len(payload))}
+				ev.VarDesc[0] = VarArgDesc{ArgIndex: 0, Offset: 0, Length: 12}
+				ev.VarDesc[1] = VarArgDesc{ArgIndex: 1, Offset: 12, Length: uint16(len(payload))}
 				copy(ev.Payload[:], []byte("lstat.sample"))
 				copy(ev.Payload[12:], payload)
 				return ev
@@ -373,12 +373,12 @@ func TestSimpleArgsDecode(t *testing.T) {
 		},
 		{
 			name: "newfstatat with decoded stat buffer",
-			ev: func() event {
+			ev: func() Event {
 				payload := encodeStatPayload(unix.Stat_t{
 					Mode: unix.S_IFREG | 0600,
 					Size: 99,
 				})
-				ev := event{
+				ev := Event{
 					SyscallID:  int64(unix.SYS_NEWFSTATAT),
 					Ret:        0,
 					ArgCount:   4,
@@ -387,8 +387,8 @@ func TestSimpleArgsDecode(t *testing.T) {
 					VarCount:   2,
 					PayloadLen: uint16(16 + len(payload)),
 				}
-				ev.VarDesc[0] = varArgDesc{ArgIndex: 1, Offset: 0, Length: 16}
-				ev.VarDesc[1] = varArgDesc{ArgIndex: 2, Offset: 16, Length: uint16(len(payload))}
+				ev.VarDesc[0] = VarArgDesc{ArgIndex: 1, Offset: 0, Length: 16}
+				ev.VarDesc[1] = VarArgDesc{ArgIndex: 2, Offset: 16, Length: uint16(len(payload))}
 				copy(ev.Payload[:], []byte("/tmp/litrace.txt"))
 				copy(ev.Payload[16:], payload)
 				return ev
@@ -397,12 +397,12 @@ func TestSimpleArgsDecode(t *testing.T) {
 		},
 		{
 			name: "statx with decoded statx buffer",
-			ev: func() event {
+			ev: func() Event {
 				payload := encodeStatxPayload(unix.Statx_t{
 					Mode: unix.S_IFREG | 0640,
 					Size: 777,
 				})
-				ev := event{
+				ev := Event{
 					SyscallID:  int64(unix.SYS_STATX),
 					Ret:        0,
 					ArgCount:   5,
@@ -411,8 +411,8 @@ func TestSimpleArgsDecode(t *testing.T) {
 					VarCount:   2,
 					PayloadLen: uint16(16 + len(payload)),
 				}
-				ev.VarDesc[0] = varArgDesc{ArgIndex: 1, Offset: 0, Length: 16}
-				ev.VarDesc[1] = varArgDesc{ArgIndex: 4, Offset: 16, Length: uint16(len(payload))}
+				ev.VarDesc[0] = VarArgDesc{ArgIndex: 1, Offset: 0, Length: 16}
+				ev.VarDesc[1] = VarArgDesc{ArgIndex: 4, Offset: 16, Length: uint16(len(payload))}
 				copy(ev.Payload[:], []byte("/tmp/litrace.txt"))
 				copy(ev.Payload[16:], payload)
 				return ev
@@ -421,7 +421,7 @@ func TestSimpleArgsDecode(t *testing.T) {
 		},
 		{
 			name: "fstat error keeps pointer formatting",
-			ev: event{
+			ev: Event{
 				SyscallID: int64(unix.SYS_FSTAT),
 				Ret:       -int64(unix.EBADF),
 				ArgCount:  2,
@@ -432,14 +432,14 @@ func TestSimpleArgsDecode(t *testing.T) {
 		},
 		{
 			name: "fstat truncated stat buffer falls back to placeholder",
-			ev: event{
+			ev: Event{
 				SyscallID: int64(unix.SYS_FSTAT),
 				Ret:       0,
 				ArgCount:  2,
 				Args:      [6]uint64{3, 0x7ffd47b78430},
 				ArgTypes:  [6]uint8{argFD, varArgBytes},
 				VarCount:  1,
-				VarDesc: [6]varArgDesc{{
+				VarDesc: [6]VarArgDesc{{
 					ArgIndex: 1,
 					Offset:   0,
 					Length:   8,
@@ -451,14 +451,14 @@ func TestSimpleArgsDecode(t *testing.T) {
 		},
 		{
 			name: "execve with filename and argv summary",
-			ev: event{
+			ev: Event{
 				SyscallID: int64(unix.SYS_EXECVE),
 				Ret:       0,
 				ArgCount:  3,
 				Args:      [6]uint64{0, 0, 0x7ffc1234},
 				ArgTypes:  [6]uint8{varArgString, varArgArgv, argPtr},
 				VarCount:  2,
-				VarDesc: [6]varArgDesc{
+				VarDesc: [6]VarArgDesc{
 					{
 						ArgIndex: 0,
 						Offset:   0,
@@ -480,14 +480,14 @@ func TestSimpleArgsDecode(t *testing.T) {
 		},
 		{
 			name: "execve argv truncation marker",
-			ev: event{
+			ev: Event{
 				SyscallID: int64(unix.SYS_EXECVE),
 				Ret:       -int64(unix.E2BIG),
 				ArgCount:  3,
 				Args:      [6]uint64{0, 0, 0x7ffc55aa},
 				ArgTypes:  [6]uint8{varArgString, varArgArgv, argPtr},
 				VarCount:  2,
-				VarDesc: [6]varArgDesc{
+				VarDesc: [6]VarArgDesc{
 					{
 						ArgIndex: 0,
 						Offset:   0,
@@ -510,14 +510,14 @@ func TestSimpleArgsDecode(t *testing.T) {
 		},
 		{
 			name: "execve argv read error with null filename",
-			ev: event{
+			ev: Event{
 				SyscallID: int64(unix.SYS_EXECVE),
 				Ret:       -int64(unix.EFAULT),
 				ArgCount:  3,
 				Args:      [6]uint64{0, 0, 0x0},
 				ArgTypes:  [6]uint8{varArgString, varArgArgv, argPtr},
 				VarCount:  2,
-				VarDesc: [6]varArgDesc{
+				VarDesc: [6]VarArgDesc{
 					{
 						ArgIndex: 0,
 						Flags:    varFlagNullPointer,
@@ -557,7 +557,7 @@ func encodeStatxPayload(stx unix.Statx_t) []byte {
 }
 
 func TestFormatSummary(t *testing.T) {
-	summary := map[int64]*syscallSummary{
+	summary := map[int64]syscallSummary{
 		int64(unix.SYS_OPENAT): {Calls: 2, Errors: 1, TotalNs: 3000},
 		int64(unix.SYS_CLOSE):  {Calls: 1, Errors: 0, TotalNs: 1000},
 	}
@@ -583,12 +583,12 @@ func TestFormatEventPrefix(t *testing.T) {
 
 	tests := []struct {
 		name string
-		ev   event
+		ev   Event
 		want string
 	}{
 		{
 			name: "root process has no prefix",
-			ev: event{
+			ev: Event{
 				Pid: rootTGID,
 				Tid: rootTGID,
 			},
@@ -596,7 +596,7 @@ func TestFormatEventPrefix(t *testing.T) {
 		},
 		{
 			name: "child process is prefixed",
-			ev: event{
+			ev: Event{
 				Pid: 9001,
 				Tid: 9001,
 			},
@@ -604,7 +604,7 @@ func TestFormatEventPrefix(t *testing.T) {
 		},
 		{
 			name: "thread in root process is prefixed",
-			ev: event{
+			ev: Event{
 				Pid: rootTGID,
 				Tid: 9002,
 			},
@@ -612,7 +612,7 @@ func TestFormatEventPrefix(t *testing.T) {
 		},
 		{
 			name: "zero tid emits no prefix",
-			ev:   event{},
+			ev:   Event{},
 			want: "",
 		},
 	}
@@ -632,12 +632,12 @@ func TestFormatOutputLine(t *testing.T) {
 
 	tests := []struct {
 		name string
-		ev   event
+		ev   Event
 		want string
 	}{
 		{
 			name: "root process line has no pid prefix",
-			ev: event{
+			ev: Event{
 				Pid:       rootTGID,
 				Tid:       rootTGID,
 				SyscallID: int64(unix.SYS_CLOSE),
@@ -650,7 +650,7 @@ func TestFormatOutputLine(t *testing.T) {
 		},
 		{
 			name: "child process line carries strace style pid prefix",
-			ev: event{
+			ev: Event{
 				Pid:       9001,
 				Tid:       9001,
 				SyscallID: int64(unix.SYS_CLOSE),
@@ -663,7 +663,7 @@ func TestFormatOutputLine(t *testing.T) {
 		},
 		{
 			name: "thread line uses task id in pid prefix",
-			ev: event{
+			ev: Event{
 				Pid:       rootTGID,
 				Tid:       9002,
 				SyscallID: int64(unix.SYS_CLOSE),
@@ -678,9 +678,9 @@ func TestFormatOutputLine(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := formatOutputLine(tt.ev, rootTGID)
+			got := FormatOutputLine(tt.ev, rootTGID)
 			if got != tt.want {
-				t.Fatalf("formatOutputLine() mismatch for %s: got %q want %q", tt.name, got, tt.want)
+				t.Fatalf("FormatOutputLine() mismatch for %s: got %q want %q", tt.name, got, tt.want)
 			}
 		})
 	}
