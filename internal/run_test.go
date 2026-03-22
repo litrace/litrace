@@ -53,26 +53,20 @@ func TestRunRejectsMixedLaunchAndAttachModes(t *testing.T) {
 func TestAddSummaryEvent(t *testing.T) {
 	t.Parallel()
 
-	summary := make(map[int64]*syscallSummary)
+	summary := make(map[int64]syscallSummary)
 
 	addSummaryEvent(summary, Event{SyscallID: int64(unix.SYS_OPENAT), Ret: 3, Dur: 5000})
 	addSummaryEvent(summary, Event{SyscallID: int64(unix.SYS_OPENAT), Ret: -int64(unix.ENOENT), Dur: 7000})
 	addSummaryEvent(summary, Event{SyscallID: int64(unix.SYS_CLOSE), Ret: 0, Dur: 2000})
 
 	openat := summary[int64(unix.SYS_OPENAT)]
-	if openat == nil {
-		t.Fatal("missing openat summary row")
-	}
 	if openat.Calls != 2 || openat.Errors != 1 || openat.TotalNs != 12000 {
-		t.Fatalf("openat summary = %+v, want calls=2 errors=1 totalNs=12000", *openat)
+		t.Fatalf("openat summary = %+v, want calls=2 errors=1 totalNs=12000", openat)
 	}
 
 	closeStats := summary[int64(unix.SYS_CLOSE)]
-	if closeStats == nil {
-		t.Fatal("missing close summary row")
-	}
 	if closeStats.Calls != 1 || closeStats.Errors != 0 || closeStats.TotalNs != 2000 {
-		t.Fatalf("close summary = %+v, want calls=1 errors=0 totalNs=2000", *closeStats)
+		t.Fatalf("close summary = %+v, want calls=1 errors=0 totalNs=2000", closeStats)
 	}
 }
 

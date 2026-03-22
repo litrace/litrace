@@ -8,16 +8,13 @@ type syscallSummary struct {
 	TotalNs uint64
 }
 
-func addSummaryEvent(summary map[int64]*syscallSummary, ev Event) {
+func addSummaryEvent(summary map[int64]syscallSummary, ev Event) {
 	stats := summary[ev.SyscallID]
-	if stats == nil {
-		stats = &syscallSummary{}
-		summary[ev.SyscallID] = stats
-	}
 
 	stats.Calls++
 	if ev.Ret < 0 {
 		stats.Errors++
 	}
 	stats.TotalNs += ev.Dur
+	summary[ev.SyscallID] = stats
 }
