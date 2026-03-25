@@ -47,8 +47,21 @@ func TestParseArgs(t *testing.T) {
 			wantErr: "unknown option \"-x\"",
 		},
 		{
+			name:    "rejects unknown long option",
+			args:    []string{"--not-a-real-option", "/bin/echo"},
+			wantErr: "unknown option \"--not-a-real-option\"",
+		},
+		{
 			name:         "supports -f before program",
 			args:         []string{"-f", "/bin/echo", "hi"},
+			wantFollow:   true,
+			wantProgName: "/bin/echo",
+			wantProgPath: "/bin/echo",
+			wantProgArgs: []string{"hi"},
+		},
+		{
+			name:         "supports --follow-forks before program",
+			args:         []string{"--follow-forks", "/bin/echo", "hi"},
 			wantFollow:   true,
 			wantProgName: "/bin/echo",
 			wantProgPath: "/bin/echo",
@@ -63,8 +76,24 @@ func TestParseArgs(t *testing.T) {
 			wantProgArgs: []string{"hi"},
 		},
 		{
+			name:         "supports --output trace output file",
+			args:         []string{"--output=/tmp/litrace.out", "/bin/echo", "hi"},
+			wantTraceOut: "/tmp/litrace.out",
+			wantProgName: "/bin/echo",
+			wantProgPath: "/bin/echo",
+			wantProgArgs: []string{"hi"},
+		},
+		{
 			name:         "supports summary mode",
 			args:         []string{"-c", "/bin/echo", "hi"},
+			wantSummary:  true,
+			wantProgName: "/bin/echo",
+			wantProgPath: "/bin/echo",
+			wantProgArgs: []string{"hi"},
+		},
+		{
+			name:         "supports --summary-only mode",
+			args:         []string{"--summary-only", "/bin/echo", "hi"},
 			wantSummary:  true,
 			wantProgName: "/bin/echo",
 			wantProgPath: "/bin/echo",
@@ -83,6 +112,11 @@ func TestParseArgs(t *testing.T) {
 			wantAttach: []int{123},
 		},
 		{
+			name:       "supports long attach mode without program",
+			args:       []string{"--attach=123"},
+			wantAttach: []int{123},
+		},
+		{
 			name:    "rejects mixing attach mode with program",
 			args:    []string{"-p", "123", "/bin/echo"},
 			wantErr: "cannot use -p with a program",
@@ -90,6 +124,14 @@ func TestParseArgs(t *testing.T) {
 		{
 			name:         "supports trace path before program",
 			args:         []string{"-P", "/tmp/target", "/bin/echo", "hi"},
+			wantPaths:    []string{filepath.Clean(mustAbs(t, "/tmp/target"))},
+			wantProgName: "/bin/echo",
+			wantProgPath: "/bin/echo",
+			wantProgArgs: []string{"hi"},
+		},
+		{
+			name:         "supports long trace path before program",
+			args:         []string{"--trace-path=/tmp/target", "/bin/echo", "hi"},
 			wantPaths:    []string{filepath.Clean(mustAbs(t, "/tmp/target"))},
 			wantProgName: "/bin/echo",
 			wantProgPath: "/bin/echo",
@@ -192,6 +234,12 @@ func TestParseArgsAttachFilter(t *testing.T) {
 			wantTrace: []int64{0},
 		},
 		{
+			name:      "long attach mode can combine with long trace filter",
+			args:      []string{"--attach=42", "--trace=read"},
+			wantPIDs:  []int{42},
+			wantTrace: []int64{0},
+		},
+		{
 			name:    "empty attach expression",
 			args:    []string{"-p", ""},
 			wantErr: "empty PID list",
@@ -270,6 +318,12 @@ func TestParseArgsTracePath(t *testing.T) {
 			wantTrace: []int64{257},
 		},
 		{
+			name:      "long path selector combines with long trace selector",
+			args:      []string{"--trace-path=/tmp/one", "--trace=openat", "/bin/echo"},
+			wantPaths: []string{filepath.Clean(mustAbs(t, "/tmp/one"))},
+			wantTrace: []int64{257},
+		},
+		{
 			name:    "empty path rejected",
 			args:    []string{"-P", "", "/bin/echo"},
 			wantErr: "invalid -P path \"\": empty path",
@@ -330,8 +384,32 @@ func TestParseArgsTraceFilter(t *testing.T) {
 			wantProgName: "/bin/echo",
 		},
 		{
+			name:         "single syscall shorthand selector",
+			args:         []string{"-e", "read", "/bin/echo"},
+			wantIDs:      []int64{0},
+			wantProgName: "/bin/echo",
+		},
+		{
+			name:         "single long syscall selector",
+			args:         []string{"--trace=read", "/bin/echo"},
+			wantIDs:      []int64{0},
+			wantProgName: "/bin/echo",
+		},
+		{
 			name:         "comma-separated selector",
 			args:         []string{"-e", "trace=read,write", "/bin/echo"},
+			wantIDs:      []int64{0, 1},
+			wantProgName: "/bin/echo",
+		},
+		{
+			name:         "comma-separated shorthand selector",
+			args:         []string{"-e", "read,write", "/bin/echo"},
+			wantIDs:      []int64{0, 1},
+			wantProgName: "/bin/echo",
+		},
+		{
+			name:         "repeated long selector unions selectors",
+			args:         []string{"--trace=read", "--trace=write", "/bin/echo"},
 			wantIDs:      []int64{0, 1},
 			wantProgName: "/bin/echo",
 		},
@@ -342,8 +420,8 @@ func TestParseArgsTraceFilter(t *testing.T) {
 			wantProgName: "/bin/echo",
 		},
 		{
-			name:    "invalid expression missing trace prefix",
-			args:    []string{"-e", "read", "/bin/echo"},
+			name:    "invalid unknown qualified expression",
+			args:    []string{"-e", "bogus=failed", "/bin/echo"},
 			wantErr: "expected trace=<syscall[,syscall...]>",
 		},
 		{
@@ -364,6 +442,21 @@ func TestParseArgsTraceFilter(t *testing.T) {
 		{
 			name:    "unknown syscall name",
 			args:    []string{"-e", "trace=read,not_a_real_syscall", "/bin/echo"},
+			wantErr: "unknown syscall \"not_a_real_syscall\"",
+		},
+		{
+			name:    "empty long trace selector",
+			args:    []string{"--trace=", "/bin/echo"},
+			wantErr: "empty trace selector",
+		},
+		{
+			name:    "empty long syscall token",
+			args:    []string{"--trace=read,,write", "/bin/echo"},
+			wantErr: "empty syscall name",
+		},
+		{
+			name:    "unknown long trace syscall name",
+			args:    []string{"--trace=read,not_a_real_syscall", "/bin/echo"},
 			wantErr: "unknown syscall \"not_a_real_syscall\"",
 		},
 	}

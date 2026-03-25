@@ -22,8 +22,84 @@ type Config struct {
 	Trace           trace.Config
 }
 
+type parsedFlags struct {
+	traceExpressions  []string
+	traceSelectors    []string
+	attachExpressions []string
+	tracePaths        []string
+}
+
+type appendStringValue struct {
+	values *[]string
+}
+
+func newAppendStringValue(values *[]string) *appendStringValue {
+	return &appendStringValue{values: values}
+}
+
+func (v *appendStringValue) String() string {
+	if v == nil || v.values == nil {
+		return ""
+	}
+	return strings.Join(*v.values, ",")
+}
+
+func (v *appendStringValue) Set(value string) error {
+	*v.values = append(*v.values, value)
+	return nil
+}
+
+func (v *appendStringValue) Type() string {
+	return "string"
+}
+
 func usageError(exeName string) error {
 	return fmt.Errorf("usage: %s [-f] [-c] [-o FILE] [-p PID[,PID...]] [-P PATH] <program> [args...]", exeName)
+}
+
+func newFlagSet(exeName string, cfg *Config, flags *parsedFlags) *pflag.FlagSet {
+	fs := pflag.NewFlagSet(exeName, pflag.ContinueOnError)
+	fs.SetInterspersed(false)
+	fs.SetOutput(io.Discard)
+	fs.BoolVarP(&cfg.Trace.FollowForks, "follow-forks", "f", false, "follow child processes created via fork/clone")
+	fs.BoolVarP(&cfg.Trace.SummaryOnly, "summary-only", "c", false, "print aggregate syscall summary instead of per-syscall lines")
+	fs.StringVarP(&cfg.TraceOutputPath, "output", "o", "", "write trace output to FILE")
+	fs.StringArrayVarP(&flags.attachExpressions, "attach", "p", nil, "trace existing processes by PID")
+	fs.StringArrayVarP(&flags.tracePaths, "trace-path", "P", nil, "trace only syscalls accessing PATH")
+	fs.VarP(newAppendStringValue(&flags.traceExpressions), "trace-expression", "e", "trace only specified syscall names")
+	fs.Var(newAppendStringValue(&flags.traceSelectors), "trace", "trace only specified syscall names")
+	_ = fs.MarkHidden("trace-expression")
+	return fs
+}
+
+func normalizeFlagParseError(err error) error {
+	var notExistErr *pflag.NotExistError
+	if errors.As(err, &notExistErr) {
+		if short := notExistErr.GetSpecifiedShortnames(); short != "" {
+			return fmt.Errorf("unknown option %q", "-"+short)
+		}
+		if name := notExistErr.GetSpecifiedName(); name != "" {
+			return fmt.Errorf("unknown option %q", "--"+name)
+		}
+	}
+	return err
+
+}
+
+func parseTraceIDs(expressions []string, selectors []string) (map[int64]struct{}, error) {
+	ids, err := parseTraceExpressions(expressions)
+	if err != nil {
+		return nil, err
+	}
+
+	selectorIDs, err := parseTraceSelectors(selectors)
+	if err != nil {
+		return nil, err
+	}
+	for id := range selectorIDs {
+		ids[id] = struct{}{}
+	}
+	return ids, nil
 }
 
 func ParseArgs(exeName string, args []string) (Config, error) {
@@ -32,76 +108,26 @@ func ParseArgs(exeName string, args []string) (Config, error) {
 			TraceSyscallIDs: make(map[int64]struct{}),
 		},
 	}
-	var traceExpressions []string
-	var attachExpressions []string
-	var tracePaths []string
+	var flags parsedFlags
 
-	for _, arg := range args {
-		if arg == "--" || arg == "-" || !strings.HasPrefix(arg, "-") {
-			break
-		}
-		if strings.HasPrefix(arg, "--") {
-			name := strings.SplitN(arg, "=", 2)[0]
-			return Config{}, fmt.Errorf("unknown option %q", name)
-		}
-	}
-
-	fs := pflag.NewFlagSet(exeName, pflag.ContinueOnError)
-	fs.SetInterspersed(false)
-	fs.SetOutput(io.Discard)
-	fs.BoolVarP(&cfg.Trace.FollowForks, "follow-forks", "f", false, "follow child processes created via fork/clone")
-	fs.BoolVarP(&cfg.Trace.SummaryOnly, "summary-only", "c", false, "print aggregate syscall summary instead of per-syscall lines")
-	fs.StringVarP(&cfg.TraceOutputPath, "output", "o", "", "write trace output to FILE")
-	fs.StringArrayVarP(&attachExpressions, "attach", "p", nil, "trace existing processes by PID")
-	fs.StringArrayVarP(&tracePaths, "trace-path", "P", nil, "trace only syscalls accessing PATH")
-	fs.StringArrayVarP(&traceExpressions, "trace", "e", nil, "trace only specified syscall names")
-
+	fs := newFlagSet(exeName, &cfg, &flags)
 	if err := fs.Parse(args); err != nil {
-		var notExistErr *pflag.NotExistError
-		if errors.As(err, &notExistErr) {
-			name := notExistErr.GetSpecifiedName()
-			short := notExistErr.GetSpecifiedShortnames()
-			for _, arg := range args {
-				if arg == "--" || arg == "-" || !strings.HasPrefix(arg, "-") {
-					break
-				}
-				if short != "" {
-					if arg == "-"+short || strings.HasPrefix(arg, "-"+short+"=") {
-						return Config{}, fmt.Errorf("unknown option %q", "-"+short)
-					}
-				}
-				if name != "" {
-					if arg == "-"+name || strings.HasPrefix(arg, "-"+name+"=") {
-						return Config{}, fmt.Errorf("unknown option %q", "-"+name)
-					}
-					if arg == "--"+name || strings.HasPrefix(arg, "--"+name+"=") {
-						return Config{}, fmt.Errorf("unknown option %q", "--"+name)
-					}
-				}
-			}
-			if name != "" {
-				return Config{}, fmt.Errorf("unknown option %q", "--"+name)
-			}
-			if short != "" {
-				return Config{}, fmt.Errorf("unknown option %q", "-"+short)
-			}
-		}
-		return Config{}, err
+		return Config{}, normalizeFlagParseError(err)
 	}
 
-	ids, err := parseTraceExpressions(traceExpressions)
+	ids, err := parseTraceIDs(flags.traceExpressions, flags.traceSelectors)
 	if err != nil {
 		return Config{}, err
 	}
 	cfg.Trace.TraceSyscallIDs = ids
 
-	attachPIDs, err := parseAttachExpressions(attachExpressions)
+	attachPIDs, err := parseAttachExpressions(flags.attachExpressions)
 	if err != nil {
 		return Config{}, err
 	}
 	cfg.Trace.AttachPIDs = attachPIDs
 
-	normalizedTracePaths, err := parseTracePaths(tracePaths)
+	normalizedTracePaths, err := parseTracePaths(flags.tracePaths)
 	if err != nil {
 		return Config{}, err
 	}
@@ -190,11 +216,12 @@ func parseTraceExpressions(expressions []string) (map[int64]struct{}, error) {
 	}
 
 	for _, expression := range expressions {
-		if !strings.HasPrefix(expression, "trace=") {
+		selector := expression
+		if strings.HasPrefix(expression, "trace=") {
+			selector = strings.TrimPrefix(expression, "trace=")
+		} else if strings.Contains(expression, "=") {
 			return nil, fmt.Errorf("invalid -e expression %q: expected trace=<syscall[,syscall...]>", expression)
 		}
-
-		selector := strings.TrimPrefix(expression, "trace=")
 		if selector == "" {
 			return nil, fmt.Errorf("invalid -e expression %q: empty trace selector", expression)
 		}
@@ -206,6 +233,32 @@ func parseTraceExpressions(expressions []string) (map[int64]struct{}, error) {
 			syscallID, ok := syscalls.ID(syscallName)
 			if !ok {
 				return nil, fmt.Errorf("unknown syscall %q in -e trace selector", syscallName)
+			}
+			ids[syscallID] = struct{}{}
+		}
+	}
+
+	return ids, nil
+}
+
+func parseTraceSelectors(selectors []string) (map[int64]struct{}, error) {
+	ids := make(map[int64]struct{})
+	if len(selectors) == 0 {
+		return ids, nil
+	}
+
+	for _, selector := range selectors {
+		if selector == "" {
+			return nil, fmt.Errorf("invalid --trace selector %q: empty trace selector", selector)
+		}
+
+		for _, syscallName := range strings.Split(selector, ",") {
+			if syscallName == "" {
+				return nil, fmt.Errorf("invalid --trace selector %q: empty syscall name", selector)
+			}
+			syscallID, ok := syscalls.ID(syscallName)
+			if !ok {
+				return nil, fmt.Errorf("unknown syscall %q in --trace selector", syscallName)
 			}
 			ids[syscallID] = struct{}{}
 		}
