@@ -110,6 +110,11 @@ func Run(cfg Config, opts Options) (ws syscall.WaitStatus, err error) {
 			err = errors.Join(err, fmt.Errorf("close trace handle: %w", closeErr))
 		}
 	}()
+	if mode.isAttach() {
+		for _, pid := range mode.attachPIDs {
+			fmt.Fprintf(opts.Stderr, "%s\n", FormatAttachLine(pid))
+		}
+	}
 
 	launchDone, attachDone, err := startTargetModeMonitors(handle, opts.Signals, mode)
 	if err != nil {

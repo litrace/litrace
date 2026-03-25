@@ -24,9 +24,6 @@ func prepareTargetMode(cfg Config, opts Options) (targetMode, uint32, []uint32, 
 		if err := validateAttachTargets(cfg.AttachPIDs); err != nil {
 			return targetMode{}, 0, nil, err
 		}
-		for _, pid := range cfg.AttachPIDs {
-			fmt.Fprintf(opts.Stderr, "%s\n", FormatAttachLine(pid))
-		}
 
 		mode := targetMode{attachPIDs: slices.Clone(cfg.AttachPIDs)}
 		return mode, rootTracePID(mode.attachPIDs, 0), traceTargetTGIDs(mode.attachPIDs, 0), nil
