@@ -48,11 +48,35 @@ func startLaunchWait(handle *bpf.Handle, cmd *exec.Cmd, done chan<- ChildWaitRes
 	}()
 }
 
+type processGroupSignalSender func(pid int, sig syscall.Signal) error
+
+func sendProcessGroupSignal(pid int, sig syscall.Signal) error {
+	return syscall.Kill(-pid, sig)
+}
+
+func signalAsSyscall(sig os.Signal) (syscall.Signal, bool) {
+	syscallSig, ok := sig.(syscall.Signal)
+	if !ok || syscallSig == 0 {
+		return 0, false
+	}
+	return syscallSig, true
+}
+
+func forwardLaunchSignal(pid int, sig os.Signal, send processGroupSignalSender) {
+	syscallSig, ok := signalAsSyscall(sig)
+	if !ok {
+		return
+	}
+	if err := send(pid, syscallSig); err != nil && err != syscall.ESRCH {
+		return
+	}
+}
+
 func startLaunchMonitor(handle *bpf.Handle, signals <-chan os.Signal, pid int) {
 	go func() {
 		sig, ok := <-signals
 		if ok && sig != nil {
-			_ = syscall.Kill(-pid, syscall.SIGKILL)
+			forwardLaunchSignal(pid, sig, sendProcessGroupSignal)
 		}
 		_ = handle.CloseReader()
 	}()

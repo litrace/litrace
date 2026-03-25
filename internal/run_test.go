@@ -3,13 +3,21 @@
 package trace
 
 import (
+	"errors"
 	"io"
+	"os"
 	"strings"
 	"syscall"
 	"testing"
 
 	"golang.org/x/sys/unix"
 )
+
+type fakeSignal struct{}
+
+func (fakeSignal) Signal() {}
+
+func (fakeSignal) String() string { return "fake" }
 
 func TestRunRequiresTraceOutput(t *testing.T) {
 	t.Parallel()
@@ -106,4 +114,112 @@ func TestFormatExitLine(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestSignalAsSyscall(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		sig    os.Signal
+		want   syscall.Signal
+		wantOK bool
+	}{
+		{
+			name:   "syscall signal",
+			sig:    syscall.SIGINT,
+			want:   syscall.SIGINT,
+			wantOK: true,
+		},
+		{
+			name:   "nil signal",
+			sig:    nil,
+			wantOK: false,
+		},
+		{
+			name:   "non syscall signal",
+			sig:    fakeSignal{},
+			wantOK: false,
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, ok := signalAsSyscall(tt.sig)
+			if ok != tt.wantOK {
+				t.Fatalf("signalAsSyscall(%v) ok = %v, want %v", tt.sig, ok, tt.wantOK)
+			}
+			if got != tt.want {
+				t.Fatalf("signalAsSyscall(%v) = %v, want %v", tt.sig, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestForwardLaunchSignal(t *testing.T) {
+	t.Parallel()
+
+	t.Run("forwards syscall signal", func(t *testing.T) {
+		t.Parallel()
+
+		var gotPID int
+		var gotSig syscall.Signal
+		called := false
+
+		forwardLaunchSignal(321, syscall.SIGTERM, func(pid int, sig syscall.Signal) error {
+			called = true
+			gotPID = pid
+			gotSig = sig
+			return nil
+		})
+
+		if !called {
+			t.Fatal("forwardLaunchSignal did not invoke sender")
+		}
+		if gotPID != 321 || gotSig != syscall.SIGTERM {
+			t.Fatalf("forwardLaunchSignal sent (%d, %v), want (%d, %v)", gotPID, gotSig, 321, syscall.SIGTERM)
+		}
+	})
+
+	t.Run("ignores non syscall signal", func(t *testing.T) {
+		t.Parallel()
+
+		called := false
+		forwardLaunchSignal(321, fakeSignal{}, func(pid int, sig syscall.Signal) error {
+			called = true
+			return nil
+		})
+		if called {
+			t.Fatal("forwardLaunchSignal should ignore non-syscall signals")
+		}
+	})
+
+	t.Run("ignores esrch", func(t *testing.T) {
+		t.Parallel()
+
+		called := false
+		forwardLaunchSignal(321, syscall.SIGINT, func(pid int, sig syscall.Signal) error {
+			called = true
+			return syscall.ESRCH
+		})
+		if !called {
+			t.Fatal("forwardLaunchSignal did not invoke sender")
+		}
+	})
+
+	t.Run("swallows other sender errors", func(t *testing.T) {
+		t.Parallel()
+
+		called := false
+		forwardLaunchSignal(321, syscall.SIGINT, func(pid int, sig syscall.Signal) error {
+			called = true
+			return errors.New("boom")
+		})
+		if !called {
+			t.Fatal("forwardLaunchSignal did not invoke sender")
+		}
+	})
 }
