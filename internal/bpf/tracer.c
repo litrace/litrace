@@ -15,6 +15,7 @@
 
 #define SYSCALL_SCHEMA_COUNT \
     (sizeof(syscall_schemas) / sizeof(syscall_schemas[0]))
+#define EVENT_FLAG_PROCESS_CLONE (1 << 0)
 
 volatile const __u8 follow_forks = 0;
 volatile const __u8 trace_filter_enabled = 0;
@@ -594,7 +595,9 @@ int trace_sys_exit(struct sys_exit_args *ctx)
 	e->arg_count = 0;
 	e->payload_len = 0;
 	e->var_count = 0;
-	e->var_reserved = 0;
+	e->event_flags = 0;
+	if (ctx->ret > 0 && is_process_clone(state))
+		e->event_flags |= EVENT_FLAG_PROCESS_CLONE;
 
 #pragma unroll
 	for (i = 0; i < 6; i++) {

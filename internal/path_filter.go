@@ -43,41 +43,55 @@ func newPathFilter(cfg Config) *pathFilter {
 	return filter
 }
 
+var pathFilterSupportSyscallIDs = []int64{
+	int64(unix.SYS_OPEN),
+	int64(unix.SYS_OPENAT),
+	int64(unix.SYS_CLOSE),
+	int64(unix.SYS_DUP),
+	int64(unix.SYS_DUP2),
+	int64(unix.SYS_DUP3),
+	int64(unix.SYS_FCNTL),
+	int64(unix.SYS_CHDIR),
+	int64(unix.SYS_FCHDIR),
+	int64(unix.SYS_RENAME),
+	int64(unix.SYS_RENAMEAT),
+	int64(unix.SYS_RENAMEAT2),
+	int64(unix.SYS_UNLINK),
+	int64(unix.SYS_UNLINKAT),
+	int64(unix.SYS_ACCESS),
+	int64(unix.SYS_STAT),
+	int64(unix.SYS_LSTAT),
+	int64(unix.SYS_NEWFSTATAT),
+	int64(unix.SYS_FACCESSAT),
+	int64(unix.SYS_STATX),
+	int64(unix.SYS_OPENAT2),
+	int64(unix.SYS_FACCESSAT2),
+}
+
+var pathFilterForkSupportSyscallIDs = []int64{
+	int64(unix.SYS_FORK),
+	int64(unix.SYS_VFORK),
+	int64(unix.SYS_CLONE),
+	int64(unix.SYS_CLONE3),
+}
+
 func handleTraceSyscallIDs(cfg Config) map[int64]struct{} {
 	if len(cfg.TracePaths) == 0 || len(cfg.TraceSyscallIDs) == 0 {
 		return cfg.TraceSyscallIDs
 	}
 
-	ids := make(map[int64]struct{}, len(cfg.TraceSyscallIDs)+22)
+	ids := make(map[int64]struct{}, len(cfg.TraceSyscallIDs)+len(pathFilterSupportSyscallIDs)+len(pathFilterForkSupportSyscallIDs))
 	for id := range cfg.TraceSyscallIDs {
 		ids[id] = struct{}{}
 	}
 
-	for _, id := range []int64{
-		int64(unix.SYS_OPEN),
-		int64(unix.SYS_OPENAT),
-		int64(unix.SYS_CLOSE),
-		int64(unix.SYS_DUP),
-		int64(unix.SYS_DUP2),
-		int64(unix.SYS_DUP3),
-		int64(unix.SYS_FCNTL),
-		int64(unix.SYS_CHDIR),
-		int64(unix.SYS_FCHDIR),
-		int64(unix.SYS_RENAME),
-		int64(unix.SYS_RENAMEAT),
-		int64(unix.SYS_RENAMEAT2),
-		int64(unix.SYS_UNLINK),
-		int64(unix.SYS_UNLINKAT),
-		int64(unix.SYS_ACCESS),
-		int64(unix.SYS_STAT),
-		int64(unix.SYS_LSTAT),
-		int64(unix.SYS_NEWFSTATAT),
-		int64(unix.SYS_FACCESSAT),
-		int64(unix.SYS_STATX),
-		int64(unix.SYS_OPENAT2),
-		int64(unix.SYS_FACCESSAT2),
-	} {
+	for _, id := range pathFilterSupportSyscallIDs {
 		ids[id] = struct{}{}
+	}
+	if cfg.FollowForks {
+		for _, id := range pathFilterForkSupportSyscallIDs {
+			ids[id] = struct{}{}
+		}
 	}
 
 	return ids
@@ -114,6 +128,8 @@ func (f *pathFilter) userAllows(syscallID int64) bool {
 }
 
 func (f *pathFilter) observe(ev Event) {
+	f.observeProcessClone(ev)
+
 	switch ev.SyscallID {
 	case int64(unix.SYS_OPEN):
 		f.observeOpen(ev, 0)
@@ -142,6 +158,21 @@ func (f *pathFilter) observe(ev Event) {
 	case int64(unix.SYS_UNLINKAT):
 		f.observeUnlink(ev, 1)
 	}
+}
+
+func (f *pathFilter) observeProcessClone(ev Event) {
+	childPID, ok := processCloneChildPID(ev)
+	if !ok {
+		return
+	}
+	f.observeForkChild(ev.Pid, childPID)
+}
+
+func processCloneChildPID(ev Event) (uint32, bool) {
+	if ev.Ret <= 0 || !eventCreatesProcess(ev) {
+		return 0, false
+	}
+	return uint32(ev.Ret), true
 }
 
 func (f *pathFilter) observeOpen(ev Event, pathArgIndex int) {
@@ -380,6 +411,55 @@ func (f *pathFilter) stateForPID(pid uint32) *processPathState {
 
 func (f *pathFilter) stateForPIDIfPresent(pid uint32) *processPathState {
 	return f.stateByPID[pid]
+}
+
+func cloneTrackedFDSet(src map[uint64]struct{}) map[uint64]struct{} {
+	if len(src) == 0 {
+		return nil
+	}
+
+	dst := make(map[uint64]struct{}, len(src))
+	for fd := range src {
+		dst[fd] = struct{}{}
+	}
+	return dst
+}
+
+func cloneFDPaths(src map[uint64]string) map[uint64]string {
+	if len(src) == 0 {
+		return nil
+	}
+
+	dst := make(map[uint64]string, len(src))
+	for fd, path := range src {
+		dst[fd] = path
+	}
+	return dst
+}
+
+func cloneProcessPathState(src *processPathState) *processPathState {
+	if src == nil {
+		return nil
+	}
+
+	state := &processPathState{
+		cwd:        src.cwd,
+		trackedFDs: cloneTrackedFDSet(src.trackedFDs),
+		fdPaths:    cloneFDPaths(src.fdPaths),
+	}
+	if state.cwd == "" && state.trackedFDs == nil && state.fdPaths == nil {
+		return nil
+	}
+	return state
+}
+
+func (f *pathFilter) observeForkChild(parentPID, childPID uint32) {
+	state := cloneProcessPathState(f.stateForPIDIfPresent(parentPID))
+	if state == nil {
+		delete(f.stateByPID, childPID)
+		return
+	}
+	f.stateByPID[childPID] = state
 }
 
 func (f *pathFilter) maybeDropPIDState(pid uint32) {

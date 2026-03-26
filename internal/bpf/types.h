@@ -64,7 +64,7 @@ struct event {
 	__u8 arg_count;
 	__u8 var_count;
 	__u8 arg_types[6];
-	__u8 var_reserved;
+	__u8 event_flags;
 };
 
 struct execve_snapshot {

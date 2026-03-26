@@ -13,7 +13,8 @@ func TestHandleTraceSyscallIDsPathFilterSupport(t *testing.T) {
 	t.Parallel()
 
 	got := handleTraceSyscallIDs(Config{
-		TracePaths: []string{"/tmp/target"},
+		FollowForks: true,
+		TracePaths:  []string{"/tmp/target"},
 		TraceSyscallIDs: map[int64]struct{}{
 			int64(unix.SYS_READ): {},
 		},
@@ -43,10 +44,92 @@ func TestHandleTraceSyscallIDsPathFilterSupport(t *testing.T) {
 		int64(unix.SYS_STATX),
 		int64(unix.SYS_OPENAT2),
 		int64(unix.SYS_FACCESSAT2),
+		int64(unix.SYS_FORK),
+		int64(unix.SYS_VFORK),
+		int64(unix.SYS_CLONE),
+		int64(unix.SYS_CLONE3),
 	} {
 		if _, ok := got[want]; !ok {
 			t.Fatalf("handleTraceSyscallIDs missing %d", want)
 		}
+	}
+}
+
+func TestPathFilterInheritsStateAcrossProcessClone(t *testing.T) {
+	t.Parallel()
+
+	target := filepath.Clean("/tmp/litrace-fork/target.txt")
+	filter := newPathFilter(Config{TracePaths: []string{target}})
+	parentPID := uint32(100)
+	childPID := uint32(200)
+
+	parent := filter.stateForPID(parentPID)
+	parent.cwd = filepath.Dir(target)
+	filter.trackFD(parentPID, 3)
+	filter.setFDPath(parentPID, 3, target)
+	filter.setFDPath(parentPID, 10, filepath.Dir(target))
+
+	if filter.shouldOutput(pathFilterProcessCloneEvent(int64(unix.SYS_FORK), parentPID, childPID)) {
+		t.Fatal("fork support event should not be printed")
+	}
+
+	child := filter.stateForPIDIfPresent(childPID)
+	if child == nil {
+		t.Fatal("child state was not cloned")
+	}
+	if child.cwd != parent.cwd {
+		t.Fatalf("child cwd mismatch: got %q want %q", child.cwd, parent.cwd)
+	}
+	if !filter.fdTracked(childPID, 3) {
+		t.Fatal("child should inherit tracked fd membership")
+	}
+	if got, ok := filter.fdPath(childPID, 10); !ok || got != filepath.Dir(target) {
+		t.Fatalf("child dirfd path mismatch: got %q ok=%v want %q", got, ok, filepath.Dir(target))
+	}
+
+	readChild := Event{
+		Pid:       childPID,
+		SyscallID: int64(unix.SYS_READ),
+		Ret:       1,
+		ArgCount:  3,
+		Args:      [6]uint64{3, 0, 1},
+		ArgTypes:  [6]uint8{argFD, argPtr, argUint},
+	}
+	if !filter.shouldOutput(readChild) {
+		t.Fatal("child should inherit tracked target fd")
+	}
+
+	closeChild := Event{
+		Pid:       childPID,
+		SyscallID: int64(unix.SYS_CLOSE),
+		Ret:       0,
+		ArgCount:  1,
+		Args:      [6]uint64{3},
+		ArgTypes:  [6]uint8{argFD},
+	}
+	if !filter.shouldOutput(closeChild) {
+		t.Fatal("closing inherited tracked fd should be printed for child")
+	}
+	if filter.fdTracked(childPID, 3) {
+		t.Fatal("child close should not leave fd tracked")
+	}
+	if !filter.fdTracked(parentPID, 3) {
+		t.Fatal("child close must not clear parent tracked fd")
+	}
+	if got, ok := filter.fdPath(parentPID, 3); !ok || got != target {
+		t.Fatalf("parent tracked fd path changed after child close: got %q ok=%v want %q", got, ok, target)
+	}
+
+	chdirChild := pathFilterSinglePathEvent(int64(unix.SYS_CHDIR), "/tmp", 0)
+	chdirChild.Pid = childPID
+	if filter.shouldOutput(chdirChild) {
+		t.Fatal("child chdir support event should not be printed")
+	}
+	if childState := filter.stateForPIDIfPresent(childPID); childState == nil || childState.cwd != "/tmp" {
+		t.Fatalf("child cwd mismatch after chdir: %+v", childState)
+	}
+	if parentState := filter.stateForPIDIfPresent(parentPID); parentState == nil || parentState.cwd != filepath.Dir(target) {
+		t.Fatalf("parent cwd changed after child chdir: %+v", parentState)
 	}
 }
 
@@ -532,4 +615,13 @@ func pathFilterAtPathEvent(syscallID int64, dirfd uint64, argIndex uint8, path s
 	}
 	copy(ev.Payload[:], []byte(path))
 	return ev
+}
+
+func pathFilterProcessCloneEvent(syscallID int64, parentPID, childPID uint32) Event {
+	return Event{
+		Pid:        parentPID,
+		SyscallID:  syscallID,
+		Ret:        int64(childPID),
+		EventFlags: eventFlagProcessClone,
+	}
 }

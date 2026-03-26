@@ -8,21 +8,21 @@ import (
 )
 
 type Event struct {
-	Ts          uint64
-	Dur         uint64
-	SyscallID   int64
-	Ret         int64
-	Args        [6]uint64
-	VarDesc     [6]VarArgDesc
-	Payload     [512]byte
-	Pid         uint32
-	Tid         uint32
-	Seq         uint32
-	PayloadLen  uint16
-	ArgCount    uint8
-	VarCount    uint8
-	ArgTypes    [6]uint8
-	VarReserved uint8
+	Ts         uint64
+	Dur        uint64
+	SyscallID  int64
+	Ret        int64
+	Args       [6]uint64
+	VarDesc    [6]VarArgDesc
+	Payload    [512]byte
+	Pid        uint32
+	Tid        uint32
+	Seq        uint32
+	PayloadLen uint16
+	ArgCount   uint8
+	VarCount   uint8
+	ArgTypes   [6]uint8
+	EventFlags uint8
 }
 
 type VarArgDesc struct {
@@ -35,6 +35,12 @@ type VarArgDesc struct {
 
 type event = Event
 type varArgDesc = VarArgDesc
+
+const eventFlagProcessClone uint8 = 1 << 0
+
+func eventCreatesProcess(ev Event) bool {
+	return ev.EventFlags&eventFlagProcessClone != 0
+}
 
 func DecodeEvent(raw []byte) (Event, error) {
 	var ev Event

@@ -3,7 +3,9 @@
 package tests
 
 import (
+	"fmt"
 	"path/filepath"
+	"regexp"
 	"testing"
 )
 
@@ -89,4 +91,35 @@ func TestTracePathNewfstatatDirFDRelative(t *testing.T) {
 	)
 
 	assertExactOutput(t, traceOutput, fixtureOutput)
+}
+
+func TestTracePathFollowForksInheritsDirFDState(t *testing.T) {
+	requireRoot(t)
+
+	root := repoRoot(t)
+	fixturePath := buildFixtureSource(t, root, "path_filter_fork_openat_dirfd")
+	targetPath := "/tmp/litrace_path_filter_fork_dirfd/target.tmp"
+
+	traceOutput, fixtureOutput := runLitraceArgs(
+		t,
+		root,
+		fixturePath,
+		"-f",
+		"-e", "trace=openat",
+		"-P", targetPath,
+	)
+
+	childPID := parseSinglePIDLine(t, fixtureOutput)
+	lines := splitNonEmptyLines(traceOutput)
+	if len(lines) != 2 {
+		t.Fatalf("unexpected trace line count: got %d want 2\ntrace output:\n%s", len(lines), traceOutput)
+	}
+
+	wantOpenat := regexp.MustCompile(fmt.Sprintf(`^\[pid %d\] openat\(\d+, "target\.tmp", O_RDONLY\) = \d+$`, childPID))
+	if !wantOpenat.MatchString(lines[0]) {
+		t.Fatalf("unexpected child openat line: got %q\ntrace output:\n%s", lines[0], traceOutput)
+	}
+	if lines[1] != "+++ exited with 0 +++" {
+		t.Fatalf("unexpected exit line: got %q want %q\ntrace output:\n%s", lines[1], "+++ exited with 0 +++", traceOutput)
+	}
 }
